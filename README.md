@@ -1,37 +1,152 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# GIC — Global Islamic Center (MVP)
 
-## Getting Started
+Premium one-page website for an online Quran / Islamic education center, with a student inquiry form, MongoDB storage, and a Telegram admin bot that sends notifications and exports students as CSV.
 
-First, run the development server:
+**100% JavaScript + JSX. No TypeScript.**
+
+> **Status: source written, not yet built.** The environment this was authored in blocked npm, so `npm install`, `npm run build` and `npm run lint` have **not** been run. See [Verification status](#verification-status) before deploying.
+
+## Stack
+
+One Next.js 16 app (App Router + Route Handlers), React 19, Tailwind CSS v4, Framer Motion, Zod, Mongoose/MongoDB, Telegraf, bcryptjs, reCAPTCHA v3.
+
+## Quick start
 
 ```bash
+npm install
+cp .env.example .env.local     # then fill in the values
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000.
 
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
+## Environment variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Variable | Where | Purpose |
+|---|---|---|
+| `MONGODB_URI` | server | MongoDB connection string |
+| `TELEGRAM_BOT_TOKEN` | server | From @BotFather |
+| `TELEGRAM_WEBHOOK_URL` | script | Public HTTPS base URL of the deployed site |
+| `TELEGRAM_WEBHOOK_SECRET` | server | 16–256 chars of `A-Z a-z 0-9 _ -`; Telegram echoes it on every webhook call |
+| `TELEGRAM_ALLOWED_USER_IDS` | server | Comma-separated numeric Telegram user IDs allowed to use the bot |
+| `TELEGRAM_ADMIN_CHAT_IDS` | server | Comma-separated chat IDs that receive new-inquiry notifications |
+| `TELEGRAM_ADMIN_EMAIL` | server | Email asked for by `/auth` |
+| `TELEGRAM_ADMIN_PASSWORD_HASH` | server | **bcrypt hash** of the admin password (never the password) |
+| `TELEGRAM_SESSION_HOURS` | server | Admin session lifetime, default 8 |
+| `RECAPTCHA_SECRET_KEY` | server | reCAPTCHA **v3** secret |
+| `RECAPTCHA_MIN_SCORE` | server | Default 0.5 |
+| `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` | public | reCAPTCHA **v3** site key |
+| `NEXT_PUBLIC_SITE_URL` | public | Canonical site URL (SEO, reCAPTCHA hostname check) |
+| `NEXT_PUBLIC_WHATSAPP_URL` | public | e.g. `https://wa.me/8801XXXXXXXXX` (hides WhatsApp UI if empty) |
+| `NEXT_PUBLIC_FACEBOOK_URL` | public | Footer link (hidden if empty) |
+| `NEXT_PUBLIC_GIC_EMAIL` | public | Footer / contact email (hidden if empty) |
 
-## Learn More
+Server variables are validated lazily in `src/lib/config/env.js` and never reach the client bundle.
 
-To learn more about Next.js, take a look at the following resources:
+### Generating the admin password hash
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+node -e "console.log(require('bcryptjs').hashSync('YOUR_PASSWORD', 12))"
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The hash contains `$` characters. In `.env.local`, Next.js treats `$` as variable expansion, so **escape every `$` as `\$`**:
 
-## Deploy on Vercel
+```bash
+node -e "console.log(require('bcryptjs').hashSync('YOUR_PASSWORD', 12))" | sed 's/\$/\\$/g'
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+In a hosting dashboard (Vercel, etc.) paste the raw hash with no escaping.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-# globalislamiccenter_front
+### Finding your Telegram IDs
+
+Message @userinfobot to get your numeric user ID (use it for `TELEGRAM_ALLOWED_USER_IDS`). For a private notification chat, your user ID is also your chat ID.
+
+## Telegram webhook setup
+
+1. Deploy the site over HTTPS and set all environment variables there.
+2. Set `TELEGRAM_WEBHOOK_URL` to the site's public URL.
+3. Register the webhook and command menu (one time, and again if the URL or secret changes):
+
+   ```bash
+   npm run telegram:webhook
+   ```
+
+The script reads `.env.local` / `.env`, calls `setWebhook` with the secret token, and sets the bot's command menu. It never prints the bot token.
+
+Webhook endpoint: `POST /api/telegram/webhook` (rejects any request without the correct secret header).
+
+## Bot commands
+
+| Command | Access | What it does |
+|---|---|---|
+| `/start` | allowlisted users | Shows commands for the current auth state |
+| `/auth` | allowlisted users | Email, then password; 8-hour session |
+| `/status` | allowlisted users | Shows whether the session is valid |
+| `/logout` | allowlisted users | Ends the session |
+| `/newstudents` | signed in | CSV of new inquiries; each student's export count +1 after a successful send, retired after 3 |
+| `/allstudents` | signed in | CSV of every inquiry; never changes "new" state |
+
+Security behaviors: user-ID allowlist checked on every update, password compared against a bcrypt hash, password message deleted from the chat, 5 failed attempts lock sign-in for 15 minutes, sessions stored in MongoDB, duplicate webhook deliveries ignored by `update_id`.
+
+## API
+
+`POST /api/student-inquiries` pipeline: parse → Zod validation → honeypot → rate limit (5 attempts / IP / 15 min, MongoDB-backed) → reCAPTCHA v3 → save → Telegram notification. A Telegram failure never rejects or loses a saved inquiry (status stored as `failed`).
+
+`GET /api/health` returns liveness only.
+
+Responses use `{ success, data, message }` / `{ success: false, message, error, fields? }`.
+
+## MongoDB
+
+Collections: `studentinquiries`, `telegramadminsessions`, `telegramupdates` (TTL, 7 days), `ratelimithits` (TTL, 1 hour). Indexes are created by Mongoose on first connection; the database user needs `readWrite` plus permission to create indexes (or create them once with an admin user). Atlas or any MongoDB 6+ works.
+
+## Project structure
+
+```
+src/app/            layout, page, SEO files, API route handlers (thin)
+src/components/     layout/, sections/, student/ (form), ui/, seo/
+src/models/         StudentInquiry, TelegramAdminSession, TelegramUpdate, RateLimitHit
+src/lib/            config/ db/ security/ students/ telegram/ utils/
+src/config/site.js  public site configuration
+scripts/            set-telegram-webhook.js
+```
+
+## Decisions and assumptions to review
+
+- **`isNewInquiry` instead of `isNew`.** `isNew` is a reserved Mongoose property and can interfere with saves, so the "new" flag is stored as `isNewInquiry`. Behavior matches the plan; the CSV column is still "Is New".
+- **No separate `address` field.** The form's "city / location" is stored in `city` (max 200 chars).
+- **Vision and Mission copy is a draft** written from the About brief (no text was supplied). Replace it with the client's approved wording in `Vision.jsx` and `Mission.jsx`. The Commitment quote is verbatim from the brief.
+- **Plain controlled React state + the shared Zod schema** for the form (no React Hook Form); reCAPTCHA is loaded directly from Google on first form interaction (no wrapper package). The reCAPTCHA badge is hidden by CSS and the required disclosure text is shown in the form.
+- **Bangla-first page** with English supporting lines; no `hreflang` alternates.
+- **Admin timestamps** are shown in Asia/Dhaka time.
+- **IP address** is stored server-side for abuse control, excluded from queries by default and from the CSV, and disclosed on the form.
+- **Rate-limit IP source:** `X-Real-IP`, then the last `X-Forwarded-For` entry. If you self-host, make your reverse proxy set `X-Real-IP`.
+
+## Verification status
+
+Done offline (npm was blocked):
+
+- No `.ts` / `.tsx` files or TypeScript syntax.
+- Every non-JSX `.js` file and `next.config.mjs` passes `node --check`.
+- CSV export and logger redaction executed and checked (BOM, quoting, formula-injection guard, phone exemption, bot-token scrubbing).
+- Shared validation executed against 21 cases with Zod 3.25 (minor/adult guardian rules, normalization, limits, unknown keys dropped).
+
+**Not yet verified (needs `npm install` first):**
+
+- `npm run build` and `npm run lint`
+- JSX files (components, `layout.js`, `page.js`, OG image/icon), Tailwind v4 `@apply` rules, `next/font` Bengali font loading
+- Mongoose models and indexes against a real database
+- Telegraf webhook handling, command flows and CSV delivery against the real Telegram API
+- reCAPTCHA end to end
+
+Suggested first run: `npm install && npm run lint && npm run build`, then walk the manual test list below.
+
+## Manual test list
+
+Submission: missing required field, invalid age/email/WhatsApp, minor without guardian, adult with blank guardian, very long message, double-click submit, 6 rapid submissions (rate limit), invalid/low-score reCAPTCHA, honeypot filled, MongoDB down, Telegram down (inquiry must still save).
+
+Telegram: non-allowlisted user, unknown command, wrong email, wrong password, 5 failures (lock), expired session, logout then reuse, duplicate webhook delivery, `/newstudents` with none, `/newstudents` three times on the same student, `/allstudents` leaves new-state untouched, Telegram API failure during export (counters must not move).
+
+## Non-goals (not built)
+
+Admin web dashboard, teacher/student accounts, courses/LMS, payments, attendance, certificates, live classes, chat, email marketing, Redis, microservices.
