@@ -195,13 +195,13 @@ export default function StudentForm() {
 
   return (
     <section
-      id="join"
-      aria-labelledby="join-title"
+      id="student-registration"
+      aria-labelledby="student-registration-title"
       className="section-y scroll-mt-16 bg-brand-50"
     >
       <div className="container-page">
         <SectionHeading
-          id="join-title"
+          id="student-registration-title"
           eyebrow="ভর্তির আবেদন"
           title="শেখা শুরু করতে আবেদন করুন"
           description="নিচের ফর্মটি পূরণ করুন। আমাদের টিম আপনার সাথে যোগাযোগ করবে।"
