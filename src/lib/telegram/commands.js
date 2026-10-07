@@ -1,5 +1,9 @@
 import { getTelegramEnv } from "@/lib/config/env";
-import { isAllowedUser, checkAdminEmail, checkAdminPassword } from "@/lib/telegram/auth";
+import {
+  isAllowedUser,
+  checkAdminEmail,
+  checkAdminPassword,
+} from "@/lib/telegram/auth";
 import {
   getSession,
   isAuthenticated,
@@ -27,10 +31,7 @@ import {
 import { formatDateTime } from "@/lib/utils/format";
 import { logger } from "@/lib/utils/logger";
 
-const COMMANDS_SIGNED_OUT = [
-  "/auth — sign in",
-  "/status — session status",
-];
+const COMMANDS_SIGNED_OUT = ["/auth — sign in", "/status — session status"];
 const COMMANDS_SIGNED_IN = [
   "/newstudents — CSV of new inquiries",
   "/allstudents — CSV of every inquiry",
@@ -49,8 +50,12 @@ async function guard(ctx, next) {
   if (!userId || ctx.chat?.type !== "private") return undefined;
 
   if (!isAllowedUser(userId)) {
-    logger.warn("telegram user not allowed", { action: "telegram_guard", telegramUserId: userId });
-    if (ctx.message) await ctx.reply("⛔ You are not authorized to use this bot.");
+    logger.warn("telegram user not allowed", {
+      action: "telegram_guard",
+      telegramUserId: userId,
+    });
+    if (ctx.message)
+      await ctx.reply("⛔ You are not authorized to use this bot.");
     return undefined;
   }
   return next();
@@ -72,7 +77,12 @@ async function handleStart(ctx) {
   const signedIn = isAuthenticated(session);
   const commands = signedIn ? COMMANDS_SIGNED_IN : COMMANDS_SIGNED_OUT;
   await ctx.reply(
-    ["👋 GIC Admin Bot", "This bot is for GIC administrators only.", "", ...commands].join("\n"),
+    [
+      "👋 GIC Admin Bot",
+      "This bot is for GIC administrators only.",
+      "",
+      ...commands,
+    ].join("\n"),
   );
 }
 
@@ -80,7 +90,9 @@ async function handleAuth(ctx) {
   const session = await getSession(ctx.from.id);
 
   if (isAuthenticated(session)) {
-    await ctx.reply(`✅ You are already signed in. Session expires: ${formatDateTime(session.expiresAt)}`);
+    await ctx.reply(
+      `✅ You are already signed in. Session expires: ${formatDateTime(session.expiresAt)}`,
+    );
     return;
   }
   if (isLocked(session)) {
@@ -100,7 +112,9 @@ async function handleLogout(ctx) {
 async function handleStatus(ctx) {
   const session = await getSession(ctx.from.id);
   if (isAuthenticated(session)) {
-    await ctx.reply(`✅ Signed in. Session expires: ${formatDateTime(session.expiresAt)}`);
+    await ctx.reply(
+      `✅ Signed in. Session expires: ${formatDateTime(session.expiresAt)}`,
+    );
   } else {
     await ctx.reply("🔒 Not signed in. Send /auth to sign in.");
   }
@@ -132,7 +146,9 @@ async function handleText(ctx) {
   if (session.authState === "awaiting_email") {
     await recordEmail({ userId, matched: checkAdminEmail(text) });
     await deleteQuietly(ctx);
-    await ctx.reply("🔑 Now send the admin password. I will try to delete your message.");
+    await ctx.reply(
+      "🔑 Now send the admin password. I will try to delete your message.",
+    );
     return;
   }
 
@@ -143,9 +159,18 @@ async function handleText(ctx) {
 
   if (session.emailMatched && passwordOk) {
     const { TELEGRAM_SESSION_HOURS } = getTelegramEnv();
-    await completeAuth({ userId, chatId: ctx.chat.id, hours: TELEGRAM_SESSION_HOURS });
-    logger.info("telegram admin signed in", { action: "telegram_auth", telegramUserId: userId });
-    await ctx.reply(`✅ Signed in. Session valid for ${TELEGRAM_SESSION_HOURS} hours.\n\n${COMMANDS_SIGNED_IN.join("\n")}`);
+    await completeAuth({
+      userId,
+      chatId: ctx.chat.id,
+      hours: TELEGRAM_SESSION_HOURS,
+    });
+    logger.info("telegram admin signed in", {
+      action: "telegram_auth",
+      telegramUserId: userId,
+    });
+    await ctx.reply(
+      `✅ Signed in. Session valid for ${TELEGRAM_SESSION_HOURS} hours.\n\n${COMMANDS_SIGNED_IN.join("\n")}`,
+    );
     return;
   }
 
@@ -156,7 +181,9 @@ async function handleText(ctx) {
     locked: failure.locked,
   });
   if (failure.locked) {
-    await ctx.reply(`🔒 Too many failed attempts. Sign-in is locked for ${LOCK_MINUTES} minutes.`);
+    await ctx.reply(
+      `🔒 Too many failed attempts. Sign-in is locked for ${LOCK_MINUTES} minutes.`,
+    );
   } else {
     await ctx.reply("❌ Authentication failed. Send /auth to try again.");
   }
@@ -188,7 +215,10 @@ async function handleNewStudents(ctx) {
   try {
     rows = await listNewInquiries();
   } catch (error) {
-    logger.error("could not load new students", { action: "export_new", error });
+    logger.error("could not load new students", {
+      action: "export_new",
+      error,
+    });
     await ctx.reply("⚠️ Could not load students right now. Please try again.");
     return;
   }
@@ -206,7 +236,11 @@ async function handleNewStudents(ctx) {
       caption: `📄 New student inquiries: ${rows.length} (newest first)`,
     });
   } catch (error) {
-    logger.error("new students export failed", { action: "export_new", count: rows.length, error });
+    logger.error("new students export failed", {
+      action: "export_new",
+      count: rows.length,
+      error,
+    });
     await ctx.reply("⚠️ Export failed. Nothing was marked as exported.");
     return;
   }
@@ -216,11 +250,20 @@ async function handleNewStudents(ctx) {
   try {
     await recordNewInquiryExport(rows.map((row) => row._id));
   } catch (error) {
-    logger.error("could not update export counters", { action: "export_new", error });
-    await ctx.reply("⚠️ The file was sent, but export counters could not be updated, so these students may appear as new again.");
+    logger.error("could not update export counters", {
+      action: "export_new",
+      error,
+    });
+    await ctx.reply(
+      "⚠️ The file was sent, but export counters could not be updated, so these students may appear as new again.",
+    );
     return;
   }
-  logger.info("new students exported", { action: "export_new", count: rows.length, telegramUserId: ctx.from.id });
+  logger.info("new students exported", {
+    action: "export_new",
+    count: rows.length,
+    telegramUserId: ctx.from.id,
+  });
 }
 
 async function handleAllStudents(ctx) {
@@ -231,7 +274,10 @@ async function handleAllStudents(ctx) {
   try {
     rows = await listAllInquiries();
   } catch (error) {
-    logger.error("could not load all students", { action: "export_all", error });
+    logger.error("could not load all students", {
+      action: "export_all",
+      error,
+    });
     await ctx.reply("⚠️ Could not load students right now. Please try again.");
     return;
   }
@@ -247,9 +293,17 @@ async function handleAllStudents(ctx) {
       rows,
       caption: `📄 All student inquiries: ${rows.length} (newest first)`,
     });
-    logger.info("all students exported", { action: "export_all", count: rows.length, telegramUserId: ctx.from.id });
+    logger.info("all students exported", {
+      action: "export_all",
+      count: rows.length,
+      telegramUserId: ctx.from.id,
+    });
   } catch (error) {
-    logger.error("all students export failed", { action: "export_all", count: rows.length, error });
+    logger.error("all students export failed", {
+      action: "export_all",
+      count: rows.length,
+      error,
+    });
     await ctx.reply("⚠️ Export failed. Please try again.");
   }
 }
