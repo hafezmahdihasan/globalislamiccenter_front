@@ -2,7 +2,12 @@ import Reveal from "@/components/ui/Reveal";
 import { WhatsAppIcon } from "@/components/ui/Icons";
 import { siteConfig } from "@/config/site";
 
-const CHIPS = ["অনলাইন ক্লাস", "শিশু থেকে প্রাপ্তবয়স্ক", "নারী-পুরুষ সবার জন্য", "বাংলা ও English"];
+const CHIPS = [
+  "অনলাইন ক্লাস",
+  "শিশু থেকে প্রাপ্তবয়স্ক",
+  "নারী-পুরুষ সবার জন্য",
+  "বাংলা ও English",
+];
 
 export default function Hero() {
   return (
@@ -12,12 +17,16 @@ export default function Hero() {
     >
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 -z-10 opacity-[0.07] [background-image:radial-gradient(circle_at_1px_1px,#ffffff_1px,transparent_0)] [background-size:24px_24px]"
+        className="pointer-events-none absolute inset-0 -z-10 opacity-[0.07] bg-[radial-gradient(circle_at_1px_1px,#ffffff_1px,transparent_0)] bg-size-[24px_24px]"
       />
 
       <div className="container-page py-16 sm:py-24 lg:py-28">
         <Reveal className="mx-auto max-w-3xl text-center">
-          <p lang="ar" dir="rtl" className="text-xl text-gold-light sm:text-2xl">
+          <p
+            lang="ar"
+            dir="rtl"
+            className="text-xl text-gold-light sm:text-2xl"
+          >
             بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
           </p>
 
@@ -33,15 +42,16 @@ export default function Hero() {
           </h1>
 
           <p className="mt-5 text-base leading-relaxed text-ivory/85 sm:text-lg">
-            বিশ্বের যেকোনো প্রান্ত থেকে অনলাইনে শুদ্ধ কুরআন তিলাওয়াত, তাজবীদ, মাখরাজ ও ইসলামী আদব
-            শিখুন।
+            বিশ্বের যেকোনো প্রান্ত থেকে অনলাইনে শুদ্ধ কুরআন তিলাওয়াত, তাজবীদ,
+            মাখরাজ ও ইসলামী আদব শিখুন।
           </p>
           <p className="mt-2 text-sm text-ivory/65 sm:text-base">
-            Online Quran &amp; Islamic education for learners around the world — in Bangla and English.
+            Online Quran &amp; Islamic education for learners around the world —
+            in Bangla and English.
           </p>
 
           <div className="mt-8 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
-            <a href="#join" className="btn btn-gold">
+            <a href="#student-registration" className="btn btn-gold">
               ভর্তির আবেদন করুন
             </a>
             {siteConfig.whatsappUrl ? (
