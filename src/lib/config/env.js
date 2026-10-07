@@ -25,6 +25,20 @@ const idList = (name) =>
         .min(1, `${name} must contain at least one ID`),
     );
 
+/**
+ * Tolerate the common ways a bcrypt hash gets mangled when pasted into env
+ * files or hosting dashboards: surrounding whitespace/quotes, and `\$`
+ * escapes (needed in .env files, but literal backslashes in a dashboard).
+ */
+function cleanBcryptHash(value) {
+  if (typeof value !== "string") return value;
+  return value
+    .trim()
+    .replace(/^["']+|["']+$/g, "")
+    .replace(/\\\$/g, () => "$")
+    .trim();
+}
+
 const dbSchema = z.object({
   MONGODB_URI: z.string({ required_error: "MONGODB_URI is required" }).min(1),
 });
@@ -44,12 +58,15 @@ const telegramSchema = z.object({
   TELEGRAM_ADMIN_EMAIL: z
     .string({ required_error: "TELEGRAM_ADMIN_EMAIL is required" })
     .email("TELEGRAM_ADMIN_EMAIL must be an email address"),
-  TELEGRAM_ADMIN_PASSWORD_HASH: z
-    .string({ required_error: "TELEGRAM_ADMIN_PASSWORD_HASH is required" })
-    .regex(
-      /^\$2[aby]\$\d{2}\$.{53}$/,
-      "TELEGRAM_ADMIN_PASSWORD_HASH must be a bcrypt hash (escape each $ as \\$ in .env files)",
-    ),
+  TELEGRAM_ADMIN_PASSWORD_HASH: z.preprocess(
+    cleanBcryptHash,
+    z
+      .string({ required_error: "TELEGRAM_ADMIN_PASSWORD_HASH is required" })
+      .regex(
+        /^\$2[aby]\$\d{2}\$.{53}$/,
+        "TELEGRAM_ADMIN_PASSWORD_HASH must be a bcrypt hash (about 60 chars, starting with $2b$)",
+      ),
+  ),
   TELEGRAM_SESSION_HOURS: z.coerce.number().positive().max(72).default(8),
 });
 
