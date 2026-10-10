@@ -3,6 +3,10 @@ const nextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
   serverExternalPackages: ["mongoose", "telegraf", "bcryptjs"],
+  // Make sure the Bengali font files are shipped with the serverless functions.
+  outputFileTracingIncludes: {
+    "/api/**/*": ["./node_modules/@fontsource/noto-sans-bengali/files/*.woff2"],
+  },
   async headers() {
     return [
       {

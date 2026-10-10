@@ -2,8 +2,7 @@ import { getBot } from "@/lib/telegram/bot";
 import { getTelegramEnv } from "@/lib/config/env";
 import StudentInquiry from "@/models/StudentInquiry";
 import { formatDateTime } from "@/lib/utils/format";
-import { buildProfileFile, exportFilename } from "@/lib/students/pdf";
-import { generateWithSlowNotices } from "@/lib/telegram/pdf-delivery";
+import { buildStudentProfileFile, reportFilename } from "@/lib/students/report";
 import { logger } from "@/lib/utils/logger";
 
 const line = (label, value) => (value ? `${label}: ${value}` : null);
@@ -38,13 +37,13 @@ export function formatInquiryMessage(inquiry) {
 }
 
 /**
- * Notify every configured admin chat with a one-page A4 PDF of the NEW student
- * (not a table). If the PDF cannot be made, the plain-text message is sent
+ * Notify every configured admin chat with a one-page A4 HTML sheet of the NEW student
+ * (not a table). If the report cannot be built, the plain-text message is sent
  * instead so the admin never misses an inquiry. Never throws: a Telegram
  * outage must not affect the already-saved inquiry. The outcome is stored.
  *
  * Designed to run AFTER the HTTP response (see `after()` in the route), so a
- * slow PDF never keeps the visitor waiting.
+ * slow upload never keeps the visitor waiting.
  */
 export async function notifyNewInquiry(inquiry) {
   let sent = 0;
@@ -52,18 +51,11 @@ export async function notifyNewInquiry(inquiry) {
   try {
     const { TELEGRAM_ADMIN_CHAT_IDS } = getTelegramEnv();
     const bot = getBot();
-    const notifyAll = async (text) => {
-      await Promise.allSettled(TELEGRAM_ADMIN_CHAT_IDS.map((id) => bot.telegram.sendMessage(id, text)));
-    };
-
-    let pdf = null;
+    let report = null;
     try {
-      pdf = await generateWithSlowNotices(
-        ({ signal }) => buildProfileFile(inquiry, { signal }),
-        { notify: notifyAll },
-      );
+      report = await buildStudentProfileFile(inquiry);
     } catch (error) {
-      logger.error("student pdf failed, falling back to text", {
+      logger.error("student report failed, falling back to text", {
         action: "telegram_notify",
         submissionId: inquiry.submissionId,
         error,
@@ -75,21 +67,16 @@ export async function notifyNewInquiry(inquiry) {
 
     for (const chatId of TELEGRAM_ADMIN_CHAT_IDS) {
       try {
-        if (pdf) {
+        if (report) {
           await bot.telegram.sendDocument(
             chatId,
-            { source: pdf.buffer, filename: exportFilename(`student-${inquiry.submissionId}`, pdf.format) },
-            {
-              caption:
-                pdf.format === "html"
-                  ? `${summary}\n\nℹ️ Sent as an HTML file: open it in a browser (Print → Save as PDF if you need a PDF).`
-                  : summary,
-            },
+            { source: report.buffer, filename: reportFilename(`student-${inquiry.submissionId}`) },
+            { caption: `${summary}\n\nℹ️ Open the file in a browser. Need a PDF? Print → Save as PDF.` },
           );
         } else {
           await bot.telegram.sendMessage(
             chatId,
-            `⚠️ The PDF could not be created, so here is the plain text instead.\n\n${fallbackText}`,
+            `⚠️ The report file could not be created, so here is the plain text instead.\n\n${fallbackText}`,
             { link_preview_options: { is_disabled: true } },
           );
         }

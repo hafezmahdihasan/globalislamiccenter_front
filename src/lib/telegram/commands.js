@@ -18,8 +18,7 @@ import {
   listAllInquiries,
   recordNewInquiryExport,
 } from "@/lib/students/service";
-import { buildListFile, exportFilename, MAX_PDF_BYTES } from "@/lib/students/pdf";
-import { generateWithSlowNotices } from "@/lib/telegram/pdf-delivery";
+import { buildStudentListFile, reportFilename, MAX_FILE_BYTES } from "@/lib/students/report";
 import { formatDateTime } from "@/lib/utils/format";
 import { logger } from "@/lib/utils/logger";
 
@@ -28,8 +27,8 @@ const COMMANDS_SIGNED_OUT = [
   "/status — session status",
 ];
 const COMMANDS_SIGNED_IN = [
-  "/newstudents — PDF table of new inquiries",
-  "/allstudents — PDF table of every inquiry",
+  "/newstudents — HTML table of new inquiries",
+  "/allstudents — HTML table of every inquiry",
   "/status — session status",
   "/logout — end session",
 ];
@@ -159,32 +158,27 @@ async function handleText(ctx) {
 }
 
 /**
- * Builds the table PDF (20 students per 26x30in page) and sends it. While it
- * is still being made, "sorry, 1 more minute" messages go out every minute.
- * Returns true only if Telegram accepted the file.
+ * Builds the table report (HTML, 20 students per page) and sends it as a
+ * document. Returns true only if Telegram accepted the file.
  */
-async function sendPdf(ctx, { kind, title, subtitle, rows, caption }) {
-  await ctx.reply("⏳ Preparing your PDF… I will send it as soon as it is ready.").catch(() => {});
+async function sendReport(ctx, { kind, title, subtitle, rows, caption }) {
   ctx.sendChatAction("upload_document").catch(() => {});
 
-  const { buffer, pageCount, format } = await generateWithSlowNotices(
-    ({ signal }) => buildListFile(rows, { title, subtitle, signal }),
-    { notify: (text) => ctx.reply(text) },
-  );
+  const { buffer, pageCount } = await buildStudentListFile(rows, { title, subtitle });
 
-  if (buffer.length > MAX_PDF_BYTES) {
+  if (buffer.length > MAX_FILE_BYTES) {
     await ctx.reply(
-      `⚠️ This PDF is too large to send through Telegram (${(buffer.length / 1048576).toFixed(1)} MB). Nothing was changed.`,
+      `⚠️ This file is too large to send through Telegram (${(buffer.length / 1048576).toFixed(1)} MB). Nothing was changed.`,
     );
     return false;
   }
 
   await ctx.replyWithDocument(
-    { source: buffer, filename: exportFilename(kind, format) },
+    { source: buffer, filename: reportFilename(kind) },
     {
       caption:
-        `${caption}\n${pageCount} page${pageCount === 1 ? "" : "s"} · 20 students per page` +
-        (format === "html" ? "\nℹ️ Sent as an HTML file: open it in a browser (Print → Save as PDF if you need a PDF)." : ""),
+        `${caption}\n${pageCount} page${pageCount === 1 ? "" : "s"} · 20 students per page\n` +
+        "ℹ️ Open the file in a browser. Need a PDF? Print → Save as PDF.",
     },
   );
   return true;
@@ -210,7 +204,7 @@ async function handleNewStudents(ctx) {
 
   let delivered = false;
   try {
-    delivered = await sendPdf(ctx, {
+    delivered = await sendReport(ctx, {
       kind: "new-students",
       title: "New Student Inquiries",
       subtitle: "Newest first",
@@ -224,12 +218,12 @@ async function handleNewStudents(ctx) {
   }
   if (!delivered) return;
 
-  // Counters move only AFTER Telegram accepted the PDF.
+  // Counters move only AFTER Telegram accepted the file.
   try {
     await recordNewInquiryExport(rows.map((row) => row._id));
   } catch (error) {
     logger.error("could not update export counters", { action: "export_new", error });
-    await ctx.reply("⚠️ The PDF was sent, but export counters could not be updated, so these students may appear as new again.");
+    await ctx.reply("⚠️ The file was sent, but export counters could not be updated, so these students may appear as new again.");
     return;
   }
   logger.info("new students exported", { action: "export_new", count: rows.length, telegramUserId: ctx.from.id });
@@ -254,7 +248,7 @@ async function handleAllStudents(ctx) {
   }
 
   try {
-    await sendPdf(ctx, {
+    await sendReport(ctx, {
       kind: "all-students",
       title: "All Student Inquiries",
       subtitle: "Newest first",

@@ -1,7 +1,7 @@
-import { PROFILE_PAGE } from "@/lib/students/pdf/constants";
-import { COLORS as C } from "@/lib/students/pdf/theme";
-import { FONT_STACK } from "@/lib/students/pdf/fonts";
-import { document as htmlDocument, esc } from "@/lib/students/pdf/html";
+import { PROFILE_PAGE } from "@/lib/students/report/constants";
+import { COLORS as C } from "@/lib/students/report/theme";
+import { FONT_STACK } from "@/lib/students/report/fonts";
+import { document as htmlDocument, esc } from "@/lib/students/report/html";
 import { formatDateTime } from "@/lib/utils/format";
 
 /**
