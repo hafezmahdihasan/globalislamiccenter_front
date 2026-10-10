@@ -1,0 +1,20 @@
+/** GIC brand colours (same tokens as the website). */
+export const COLORS = {
+  brand50: "#eef6f1",
+  brand100: "#d6eadf",
+  brand200: "#aed4c0",
+  brand600: "#1f6a4b",
+  brand700: "#17573d",
+  brand800: "#124632",
+  brand900: "#0d3526",
+  brand950: "#08241a",
+  ivory: "#faf6ec",
+  ivoryDark: "#f1ead8",
+  gold: "#b8924a",
+  goldDark: "#8a6a2b",
+  goldLight: "#e0c488",
+  charcoal: "#1c2421",
+  muted: "#5b6762",
+  line: "#d9e4dd",
+  danger: "#9b2c2c",
+};

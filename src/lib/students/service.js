@@ -60,7 +60,8 @@ async function saveInquiry(data, ipAddress) {
 /**
  * Public submission pipeline:
  * validate -> honeypot -> rate limit -> reCAPTCHA -> save -> Telegram notify.
- * Returns only the public-safe submission ID.
+ * Returns the public-safe submission ID plus `runNotification`, which the
+ * caller must schedule (never send it to the client).
  */
 export async function submitStudentInquiry(body, { ip, requestId }) {
   const result = validateStudentInquiry(body);
@@ -99,33 +100,37 @@ export async function submitStudentInquiry(body, { ip, requestId }) {
     submissionId: inquiry.submissionId,
   });
 
+  // The Telegram report is created AFTER the response is sent (the route runs
+  // `runNotification` inside after()), so a slow PDF never delays the visitor.
   // Telegram failure must never lose or reject the saved inquiry.
-  try {
-    await notifyNewInquiry(inquiry);
-  } catch (error) {
-    logger.error("telegram notification threw", {
-      requestId,
-      action: "telegram_notify",
-      submissionId: inquiry.submissionId,
-      error,
-    });
-  }
+  const runNotification = async () => {
+    try {
+      await notifyNewInquiry(inquiry);
+    } catch (error) {
+      logger.error("telegram notification threw", {
+        requestId,
+        action: "telegram_notify",
+        submissionId: inquiry.submissionId,
+        error,
+      });
+    }
+  };
 
-  return { submissionId: inquiry.submissionId };
+  return { submissionId: inquiry.submissionId, runNotification };
 }
 
 export async function listNewInquiries() {
   await ensureDb();
-  return StudentInquiry.find({ isNewInquiry: true }).sort({ createdAt: -1 }).lean();
+  return StudentInquiry.find({ isNewInquiry: true }).select("+ipAddress").sort({ createdAt: -1 }).lean();
 }
 
 export async function listAllInquiries() {
   await ensureDb();
-  return StudentInquiry.find({}).sort({ createdAt: -1 }).lean();
+  return StudentInquiry.find({}).select("+ipAddress").sort({ createdAt: -1 }).lean();
 }
 
 /**
- * Call ONLY after the CSV was delivered successfully. Increments each
+ * Call ONLY after the PDF was delivered successfully. Increments each
  * student's export count, then retires anyone who reached the limit.
  */
 export async function recordNewInquiryExport(ids) {

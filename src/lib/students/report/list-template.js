@@ -1,11 +1,11 @@
-import { LIST_PAGE, ROWS_PER_PAGE } from "@/lib/students/pdf/constants";
-import { COLORS as C } from "@/lib/students/pdf/theme";
-import { FONT_STACK } from "@/lib/students/pdf/fonts";
-import { document as htmlDocument, esc } from "@/lib/students/pdf/html";
+import { LIST_PAGE, ROWS_PER_PAGE } from "@/lib/students/report/constants";
+import { COLORS as C } from "@/lib/students/report/theme";
+import { FONT_STACK } from "@/lib/students/report/fonts";
+import { document as htmlDocument, esc } from "@/lib/students/report/html";
 import { formatDateTime } from "@/lib/utils/format";
 
 /**
- * Student LIST PDF: 26in x 30in pages, exactly 20 students per page, table only.
+ * Student LIST report (HTML): 26in x 30in pages, exactly 20 students per page, table only.
  * The message field is never read here.
  *
  * Every measurement is fixed (no auto heights, fixed table layout, clamped
@@ -32,7 +32,7 @@ const COLUMNS = [
 
 const widthSum = COLUMNS.reduce((sum, column) => sum + column.width, 0);
 if (widthSum !== TABLE_WIDTH) {
-  throw new Error(`PDF list columns must add up to ${TABLE_WIDTH}px, got ${widthSum}px`);
+  throw new Error(`Report list columns must add up to ${TABLE_WIDTH}px, got ${widthSum}px`);
 }
 
 const dash = '<span class="na">&ndash;</span>';
@@ -166,7 +166,7 @@ body{font-family:${FONT_STACK};color:${C.charcoal};-webkit-print-color-adjust:ex
 `;
 
 /**
- * @param {object[]} records  output of toPdfRecord(), newest first
+ * @param {object[]} records  output of toReportRecord(), newest first
  * @param {{ title: string, subtitle?: string, generatedAt?: Date }} meta
  * @returns {{ html: string, pageCount: number }}
  */

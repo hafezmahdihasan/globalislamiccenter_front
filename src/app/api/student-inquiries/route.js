@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { submitStudentInquiry } from "@/lib/students/service";
 import { getClientIp } from "@/lib/security/ip";
 import { getRequestId } from "@/lib/security/request-id";
@@ -31,8 +32,12 @@ export async function POST(request) {
       throw new AppError("VALIDATION_ERROR", { publicMessage: "Invalid request." });
     }
 
-    const result = await submitStudentInquiry(body, { ip: getClientIp(request), requestId });
-    return ok(result, "Submission received successfully.", 201);
+    const { submissionId, runNotification } = await submitStudentInquiry(body, {
+      ip: getClientIp(request),
+      requestId,
+    });
+    after(runNotification);
+    return ok({ submissionId }, "Submission received successfully.", 201);
   } catch (error) {
     return handleRouteError(error, { requestId, action: "student_inquiry" });
   }
