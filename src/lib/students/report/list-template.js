@@ -26,7 +26,7 @@ const COLUMNS = [
   { key: "consent", label: "Consent", width: 140, align: "center" },
   { key: "classLevel", label: "Class / level", width: 190 },
   { key: "ip", label: "IP address", width: 240 },
-  { key: "address", label: "Address (city, country)", width: 380 },
+  { key: "address", label: "Address (city, country)", width: 418 },
   { key: "topic", label: "Study topic", width: 256 },
 ];
 

@@ -17,19 +17,27 @@ export async function POST(request) {
   try {
     const declaredLength = Number(request.headers.get("content-length") ?? 0);
     if (declaredLength > MAX_BODY_BYTES) {
-      throw new AppError("VALIDATION_ERROR", { status: 413, publicMessage: "Request is too large." });
+      throw new AppError("VALIDATION_ERROR", {
+        status: 413,
+        publicMessage: "Request is too large.",
+      });
     }
 
     const text = await request.text();
     if (text.length > MAX_BODY_BYTES) {
-      throw new AppError("VALIDATION_ERROR", { status: 413, publicMessage: "Request is too large." });
+      throw new AppError("VALIDATION_ERROR", {
+        status: 413,
+        publicMessage: "Request is too large.",
+      });
     }
 
     let body;
     try {
       body = JSON.parse(text);
     } catch {
-      throw new AppError("VALIDATION_ERROR", { publicMessage: "Invalid request." });
+      throw new AppError("VALIDATION_ERROR", {
+        publicMessage: "Invalid request.",
+      });
     }
 
     const { submissionId, runNotification } = await submitStudentInquiry(body, {
