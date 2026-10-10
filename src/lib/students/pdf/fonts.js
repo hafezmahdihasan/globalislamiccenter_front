@@ -1,44 +1,59 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
+import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-
-// Anchor resolution at the project root so this also works if Next.js bundles
-// the module into a server chunk rather than preserving its original file URL.
-const require = createRequire(path.join(process.cwd(), "package.json"));
-let embeddedCss;
+import path from "node:path";
 
 /**
- * Self-embeds the Noto Sans Bengali variable WOFF2 subsets supplied by Fontsource.
- * This avoids relying on OS fonts, Google Fonts network access, or public URLs in Chromium.
+ * Bengali + Latin web fonts, embedded as data URIs so the PDF never depends
+ * on fonts installed on the server (serverless images have almost none).
+ * Source: the `@fontsource/noto-sans-bengali` package (OFL licence).
+ * If the package is missing we return "" and CSS falls back to system fonts.
  */
-export function getEmbeddedFontCss() {
-  if (embeddedCss) return embeddedCss;
+const WEIGHTS = [400, 700];
+const SUBSETS = [
+  { name: "bengali", range: "U+0951-0952,U+0964-0965,U+0980-09FE,U+1CD0,U+1CD2,U+1CD5-1CD6,U+1CD8,U+1CE1,U+1CEA,U+1CED,U+1CF2,U+1CF5-1CF7,U+200C-200D,U+25CC,U+20B9" },
+  { name: "latin", range: "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD" },
+];
 
-  let cssPath;
+let cache;
+
+async function findFontsDir() {
+  const require = createRequire(path.join(process.cwd(), "package.json"));
   try {
-    cssPath = require.resolve("@fontsource-variable/noto-sans-bengali/wght.css");
-  } catch (error) {
-    // Test-only fallback: it uses an installed OS font and must never be enabled in production.
-    if (process.env.PDF_USE_SYSTEM_FONT_FALLBACK === "1" && process.env.NODE_ENV !== "production") {
-      embeddedCss = `@font-face { font-family: "Noto Sans Bengali Variable"; src: local("FreeSerif"); font-weight: 100 900; font-style: normal; }`;
-      return embeddedCss;
-    }
-    throw new Error("Missing @fontsource-variable/noto-sans-bengali. Install it so PDF Bengali text renders consistently.", { cause: error });
+    const pkg = require.resolve("@fontsource/noto-sans-bengali/package.json");
+    return path.join(path.dirname(pkg), "files");
+  } catch {
+    return null;
   }
-  const sourceCss = readFileSync(cssPath, "utf8");
-  const cssDir = path.dirname(cssPath);
-  let replacedCount = 0;
-
-  embeddedCss = sourceCss.replace(/url\((['"]?)([^)'\"]+\.woff2)\1\)/g, (match, _quote, relativePath) => {
-    const fontPath = path.resolve(cssDir, relativePath);
-    const base64 = readFileSync(fontPath).toString("base64");
-    replacedCount += 1;
-    return `url("data:font/woff2;base64,${base64}")`;
-  });
-
-  if (!replacedCount) {
-    throw new Error("Could not embed Noto Sans Bengali WOFF2 subsets. Check @fontsource-variable/noto-sans-bengali installation.");
-  }
-
-  return embeddedCss;
 }
+
+export async function getFontCss() {
+  if (cache !== undefined) return cache;
+
+  const dir = await findFontsDir();
+  const faces = [];
+
+  if (dir) {
+    for (const weight of WEIGHTS) {
+      for (const subset of SUBSETS) {
+        const file = path.join(dir, `noto-sans-bengali-${subset.name}-${weight}-normal.woff2`);
+        try {
+          const data = await readFile(file);
+          faces.push(
+            `@font-face{font-family:"GICSans";font-style:normal;font-weight:${weight};` +
+              `src:url(data:font/woff2;base64,${data.toString("base64")}) format("woff2");` +
+              `unicode-range:${subset.range};}`,
+          );
+        } catch {
+          // This subset/weight is missing: system fonts cover it.
+        }
+      }
+    }
+  }
+
+  cache = faces.join("\n");
+  return cache;
+}
+
+/** Embedded font first; common system Bengali/Latin fonts as a safety net. */
+export const FONT_STACK =
+  '"GICSans","Noto Sans Bengali","Noto Sans","FreeSans","Segoe UI",Arial,sans-serif';

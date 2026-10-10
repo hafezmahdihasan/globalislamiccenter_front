@@ -1,23 +1,20 @@
-const HTML_ESCAPES = {
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-  "'": "&#39;",
-};
+/** Small HTML helpers shared by both templates. */
 
-export function esc(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (char) => HTML_ESCAPES[char]);
-}
+const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
-/** The document is self-contained: no scripts or remote requests are permitted. */
-export function makeDocument({ title, css, body, language = "bn-BD" }) {
+export const esc = (value) =>
+  String(value ?? "").replace(/[&<>"']/g, (char) => ESCAPES[char]);
+
+/** No scripts, no network: the only things allowed are inline CSS and data: URIs. */
+export const CSP =
+  "default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:";
+
+export function document({ title, css, body }) {
   return `<!doctype html>
-<html lang="${esc(language)}">
+<html lang="bn">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:;">
+<meta http-equiv="Content-Security-Policy" content="${CSP}">
 <title>${esc(title)}</title>
 <style>${css}</style>
 </head>

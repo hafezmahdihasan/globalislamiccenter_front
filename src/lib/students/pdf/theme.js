@@ -1,22 +1,20 @@
-export const COLORS = Object.freeze({
-  green: "#0d3526",
-  greenDeep: "#08241a",
-  greenMid: "#17573d",
-  greenSoft: "#eaf3ed",
+/** GIC brand colours (same tokens as the website). */
+export const COLORS = {
+  brand50: "#eef6f1",
+  brand100: "#d6eadf",
+  brand200: "#aed4c0",
+  brand600: "#1f6a4b",
+  brand700: "#17573d",
+  brand800: "#124632",
+  brand900: "#0d3526",
+  brand950: "#08241a",
   ivory: "#faf6ec",
+  ivoryDark: "#f1ead8",
   gold: "#b8924a",
+  goldDark: "#8a6a2b",
   goldLight: "#e0c488",
   charcoal: "#1c2421",
-  muted: "#64736b",
-  border: "#dbe5dd",
-  white: "#ffffff",
-  minor: "#fff6e5",
-  minorLine: "#e7bd70",
-});
-
-export const COMMON_CSS = `
-* { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
-body { font-family: "Noto Sans Bengali Variable", "Noto Sans Bengali", "FreeSerif", sans-serif; color: ${COLORS.charcoal}; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-* { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-`;
+  muted: "#5b6762",
+  line: "#d9e4dd",
+  danger: "#9b2c2c",
+};
