@@ -13,7 +13,11 @@ const line = (label, value) => (value ? `${label}: ${value}` : null);
  */
 export function formatInquiryMessage(inquiry) {
   const location = [inquiry.city, inquiry.country].filter(Boolean).join(", ");
-  const guardian = [inquiry.contactName, inquiry.guardianWhatsapp, inquiry.guardianEmail]
+  const guardian = [
+    inquiry.contactName,
+    inquiry.guardianWhatsapp,
+    inquiry.guardianEmail,
+  ]
     .filter(Boolean)
     .join(" | ");
 
@@ -70,8 +74,13 @@ export async function notifyNewInquiry(inquiry) {
         if (report) {
           await bot.telegram.sendDocument(
             chatId,
-            { source: report.buffer, filename: reportFilename(`student-${inquiry.submissionId}`) },
-            { caption: `${summary}\n\nℹ️ Open the file in a browser. Need a PDF? Print → Save as PDF.` },
+            {
+              source: report.buffer,
+              filename: reportFilename(`student-${inquiry.submissionId}`),
+            },
+            {
+              caption: `${summary}\n\nℹ️ Open the file in a browser. Need a PDF? Print → Save as PDF.`,
+            },
           );
         } else {
           await bot.telegram.sendMessage(
