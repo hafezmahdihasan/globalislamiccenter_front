@@ -236,7 +236,7 @@ export default function StudentForm() {
               {/* Honeypot: hidden from people and assistive tech, tempting to bots */}
               <div
                 aria-hidden="true"
-                className="absolute left-[-9999px] h-0 w-0 overflow-hidden"
+                className="absolute -left-2499.75 h-0 w-0 overflow-hidden"
               >
                 <label htmlFor="website">Website</label>
                 <input

@@ -1,4 +1,4 @@
-import { NextResponse, after } from "next/server";
+import { NextResponse } from "next/server";
 import { getBot } from "@/lib/telegram/bot";
 import { claimUpdate, finishUpdate } from "@/lib/telegram/updates";
 import { getTelegramEnv } from "@/lib/config/env";
@@ -9,8 +9,8 @@ import { logger } from "@/lib/utils/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// PDF exports run after the response and can take minutes.
-export const maxDuration = 300;
+// Exports can take a few seconds on slower databases.
+export const maxDuration = 30;
 
 const json = (body, status = 200) =>
   NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -50,22 +50,30 @@ export async function POST(request) {
       return json({ ok: true, duplicate: true });
     }
 
-    // 3. Answer Telegram immediately (so it never times out and retries), then
-    // run the command in after(): PDFs may take minutes. Handler errors are
-    // caught so the update is always finalized.
-    const updateId = update.update_id;
-    after(async () => {
-      let status = "done";
-      try {
-        await getBot().handleUpdate(update);
-      } catch (error) {
-        status = "failed";
-        logger.error("telegram update failed", { requestId, action: "telegram_webhook", updateId, error });
-      }
-      await finishUpdate(updateId, status).catch((error) =>
-        logger.error("could not finalize telegram update", { requestId, action: "telegram_webhook", updateId, error }),
-      );
-    });
+    // 3. Hand off to Telegraf. Handler errors are caught inside the bot, but
+    // be defensive: we always answer 200 once the update is claimed so
+    // Telegram does not retry and double-run a command.
+    let status = "done";
+    try {
+      await getBot().handleUpdate(update);
+    } catch (error) {
+      status = "failed";
+      logger.error("telegram update failed", {
+        requestId,
+        action: "telegram_webhook",
+        updateId: update.update_id,
+        error,
+      });
+    }
+
+    await finishUpdate(update.update_id, status).catch((error) =>
+      logger.error("could not finalize telegram update", {
+        requestId,
+        action: "telegram_webhook",
+        updateId: update.update_id,
+        error,
+      }),
+    );
 
     return json({ ok: true });
   } catch (error) {

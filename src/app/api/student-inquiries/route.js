@@ -1,4 +1,3 @@
-import { after } from "next/server";
 import { submitStudentInquiry } from "@/lib/students/service";
 import { getClientIp } from "@/lib/security/ip";
 import { getRequestId } from "@/lib/security/request-id";
@@ -7,8 +6,6 @@ import { ok, handleRouteError } from "@/lib/utils/api-response";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// The PDF + Telegram step runs after the response and may take minutes.
-export const maxDuration = 300;
 
 const MAX_BODY_BYTES = 20 * 1024;
 
@@ -34,12 +31,8 @@ export async function POST(request) {
       throw new AppError("VALIDATION_ERROR", { publicMessage: "Invalid request." });
     }
 
-    const { submissionId, runNotification } = await submitStudentInquiry(body, {
-      ip: getClientIp(request),
-      requestId,
-    });
-    after(runNotification);
-    return ok({ submissionId }, "Submission received successfully.", 201);
+    const result = await submitStudentInquiry(body, { ip: getClientIp(request), requestId });
+    return ok(result, "Submission received successfully.", 201);
   } catch (error) {
     return handleRouteError(error, { requestId, action: "student_inquiry" });
   }

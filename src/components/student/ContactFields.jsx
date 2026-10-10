@@ -5,6 +5,10 @@ import { LIMITS } from "@/lib/students/validation";
  * Reusable WhatsApp + email pair, used for both the student and the guardian.
  * `names` maps the pair onto the form's field names.
  */
+const numberPurify = (value) => {
+  value = String(value || "").trim();
+  return value.startsWith("+") ? value.substring(1) : value.trim();
+};
 export default function ContactFields({
   idPrefix,
   names,
@@ -22,7 +26,7 @@ export default function ContactFields({
         id={`${idPrefix}-phone`}
         name={names.phone}
         label={phoneLabel}
-        value={values[names.phone]}
+        value={numberPurify(values[names.phone])}
         onChange={onChange}
         error={errors[names.phone]}
         required={phoneRequired}
@@ -49,3 +53,11 @@ export default function ContactFields({
     </div>
   );
 }
+
+/**
+ *
+ *
+ * 
+
+
+ */
