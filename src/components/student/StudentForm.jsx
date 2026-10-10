@@ -86,8 +86,12 @@ export default function StudentForm() {
       [name]: type === "checkbox" ? checked : value,
     }));
     setErrors((current) => {
-      if (!current[name]) return current;
-      const { [name]: _removed, ...rest } = current;
+      // Changing the age switches between student and guardian contact fields.
+      const stale =
+        name === "age" ? ["age", "whatsapp", "email", "consent"] : [name];
+      if (!stale.some((key) => current[key])) return current;
+      const rest = { ...current };
+      for (const key of stale) delete rest[key];
       return rest;
     });
     if (status === "idle") setStatus("editing");
@@ -141,7 +145,17 @@ export default function StudentForm() {
         response = await fetch("/api/student-inquiries", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...values, recaptchaToken }),
+          body: JSON.stringify(
+            isMinor
+              ? {
+                  ...values,
+                  whatsapp: "",
+                  email: "",
+                  consent: false,
+                  recaptchaToken,
+                }
+              : { ...values, recaptchaToken },
+          ),
           signal: controller.signal,
         });
       } catch {
@@ -195,13 +209,13 @@ export default function StudentForm() {
 
   return (
     <section
-      id="student-registration"
-      aria-labelledby="student-registration-title"
+      id="join"
+      aria-labelledby="join-title"
       className="section-y scroll-mt-16 bg-brand-50"
     >
       <div className="container-page">
         <SectionHeading
-          id="student-registration-title"
+          id="join-title"
           eyebrow="ভর্তির আবেদন"
           title="শেখা শুরু করতে আবেদন করুন"
           description="নিচের ফর্মটি পূরণ করুন। আমাদের টিম আপনার সাথে যোগাযোগ করবে।"
@@ -236,7 +250,7 @@ export default function StudentForm() {
               {/* Honeypot: hidden from people and assistive tech, tempting to bots */}
               <div
                 aria-hidden="true"
-                className="absolute -left-2499.75 h-0 w-0 overflow-hidden"
+                className="absolute left-[-9999px] h-0 w-0 overflow-hidden"
               >
                 <label htmlFor="website">Website</label>
                 <input
@@ -370,33 +384,36 @@ export default function StudentForm() {
                 ) : null}
               </fieldset>
 
-              {/* 3. Student contact */}
-              <fieldset className="space-y-5">
-                <legend className="mb-1 text-lg font-bold text-brand-900">
-                  যোগাযোগ
-                </legend>
-                <ContactFields
-                  idPrefix="student"
-                  names={{ phone: "whatsapp", email: "email" }}
-                  values={values}
-                  errors={errors}
-                  onChange={handleChange}
-                  phoneLabel="WhatsApp নম্বর"
-                  phoneRequired
-                  phoneHint="দেশের কোড সহ লিখুন।"
-                  emailLabel="ইমেইল"
-                />
-              </fieldset>
+              {/* 3. Student contact: only for 18 and over (minors give guardian details instead) */}
+              {!isMinor ? (
+                <fieldset className="space-y-5">
+                  <legend className="mb-1 text-lg font-bold text-brand-900">
+                    যোগাযোগ
+                  </legend>
+                  <ContactFields
+                    idPrefix="student"
+                    names={{ phone: "whatsapp", email: "email" }}
+                    values={values}
+                    errors={errors}
+                    onChange={handleChange}
+                    phoneLabel="WhatsApp নম্বর"
+                    phoneRequired
+                    phoneHint="দেশের কোড সহ লিখুন।"
+                    emailLabel="ইমেইল"
+                  />
+                </fieldset>
+              ) : null}
 
-              {/* 4. Guardian / contact person: required for under 18, hidden for adults */}
+              {/* 4. Guardian / contact person: the ONLY contact for under 18, hidden for adults */}
               {isMinor ? (
                 <fieldset className="space-y-5 rounded-xl border border-gold/40 bg-ivory p-4 sm:p-5">
                   <legend className="px-2 text-lg font-bold text-brand-900">
                     অভিভাবক / যোগাযোগকারী ব্যক্তি
                   </legend>
                   <p className="text-sm text-charcoal/70">
-                    শিক্ষার্থীর বয়স {MINOR_AGE_LIMIT} বছরের কম, তাই অভিভাবকের
-                    তথ্য প্রয়োজন।
+                    শিক্ষার্থীর বয়স {MINOR_AGE_LIMIT} বছরের কম, তাই শুধু
+                    অভিভাবকের যোগাযোগের তথ্য দিন। শিক্ষার্থীর নিজের ফোন বা ইমেইল
+                    লাগবে না।
                   </p>
 
                   <Field
@@ -442,7 +459,12 @@ export default function StudentForm() {
                       />
                       <span className="text-base leading-relaxed">
                         আমি নিশ্চিত করছি যে আমি এই শিক্ষার্থীর পক্ষে তথ্য
-                        দেওয়ার জন্য অনুমোদিত (অভিভাবক বা দায়িত্বশীল ব্যক্তি)।
+                        দেওয়ার জন্য অনুমোদিত (অভিভাবক বা দায়িত্বশীল ব্যক্তি),
+                        এবং GIC আমার সাথে যোগাযোগ করতে পারে — এতে আমি সম্মত।
+                        <span aria-hidden="true" className="text-red-800">
+                          {" "}
+                          *
+                        </span>
                       </span>
                     </label>
                     {errors.guardianConsent ? (
@@ -469,35 +491,39 @@ export default function StudentForm() {
                 hint="কোনো বিশেষ প্রয়োজন বা প্রশ্ন থাকলে লিখুন।"
               />
 
-              {/* 6. Consent */}
+              {/* 6. Consent: 18+ only. Under 18 uses the guardian consent above. */}
               <div>
-                <label className="flex cursor-pointer items-start gap-3">
-                  <input
-                    type="checkbox"
-                    name="consent"
-                    checked={values.consent}
-                    onChange={handleChange}
-                    aria-required="true"
-                    aria-invalid={errors.consent ? "true" : undefined}
-                    aria-describedby={
-                      errors.consent ? "consent-error" : "consent-note"
-                    }
-                    className="mt-1 h-5 w-5 shrink-0 accent-brand-700"
-                  />
-                  <span className="text-base leading-relaxed">
-                    আমার দেওয়া তথ্য ব্যবহার করে GIC আমার সাথে যোগাযোগ করতে পারে
-                    — এতে আমি সম্মত।
-                    <span aria-hidden="true" className="text-red-800">
-                      {" "}
-                      *
-                    </span>
-                  </span>
-                </label>
-                {errors.consent ? (
-                  <p id="consent-error" className="field-error">
-                    <span aria-hidden="true">⚠ </span>
-                    {errors.consent}
-                  </p>
+                {!isMinor ? (
+                  <>
+                    <label className="flex cursor-pointer items-start gap-3">
+                      <input
+                        type="checkbox"
+                        name="consent"
+                        checked={values.consent}
+                        onChange={handleChange}
+                        aria-required="true"
+                        aria-invalid={errors.consent ? "true" : undefined}
+                        aria-describedby={
+                          errors.consent ? "consent-error" : "consent-note"
+                        }
+                        className="mt-1 h-5 w-5 shrink-0 accent-brand-700"
+                      />
+                      <span className="text-base leading-relaxed">
+                        আমার দেওয়া তথ্য ব্যবহার করে GIC আমার সাথে যোগাযোগ করতে
+                        পারে — এতে আমি সম্মত।
+                        <span aria-hidden="true" className="text-red-800">
+                          {" "}
+                          *
+                        </span>
+                      </span>
+                    </label>
+                    {errors.consent ? (
+                      <p id="consent-error" className="field-error">
+                        <span aria-hidden="true">⚠ </span>
+                        {errors.consent}
+                      </p>
+                    ) : null}
+                  </>
                 ) : null}
                 <p id="consent-note" className="mt-2 text-sm text-charcoal/65">
                   স্প্যাম রোধে জমা দেওয়ার সময় আপনার IP ঠিকানা সংরক্ষণ করা হয়।

@@ -6,8 +6,8 @@
  */
 
 import { z } from "zod";
-
 export const STUDY_TOPICS = ["কায়দা", "তাজবিদ", "আমপারা", "কোরআন শরিফ"];
+
 export const MINOR_AGE_LIMIT = 18;
 export const MIN_AGE = 3;
 export const MAX_AGE = 100;
@@ -92,7 +92,6 @@ const phoneShape = z
   .regex(/^\+?[0-9]{7,15}$/, PHONE_MESSAGE)
   .max(LIMITS.phone, PHONE_MESSAGE);
 
-const requiredPhone = z.preprocess(normalizePhone, phoneShape);
 const optionalPhone = z.preprocess(
   blankToUndefined(normalizePhone),
   phoneShape.optional(),
@@ -139,7 +138,9 @@ export const studentInquirySchema = z.object({
     errorMap: () => ({ message: "পড়ার বিষয় নির্বাচন করুন" }),
   }),
 
-  whatsapp: requiredPhone,
+  // Student's own contact: required for 18+, ignored (never stored) under 18.
+  // The age-dependent rules live in validateStudentInquiry().
+  whatsapp: optionalPhone,
   email: optionalEmail,
 
   contactName: optionalLine("অভিভাবক/যোগাযোগকারীর নাম", LIMITS.name),
@@ -154,9 +155,7 @@ export const studentInquirySchema = z.object({
       .optional(),
   ),
 
-  consent: z.literal(true, {
-    errorMap: () => ({ message: "যোগাযোগের জন্য সম্মতি দিতে হবে" }),
-  }),
+  consent: z.boolean().optional().default(false),
   guardianConsent: z.boolean().optional().default(false),
 
   // Honeypot: real users never see or fill this.
@@ -178,19 +177,28 @@ function zodFieldErrors(error) {
  * Validate a raw payload.
  * Returns { success: true, data } or { success: false, fields }.
  *
- * Minor rule (age < 18): guardian name, guardian WhatsApp and the
- * authorization confirmation are required. Adults may leave them blank.
+ * Minor rule (age < 18): ONLY the guardian's name, WhatsApp, (optional) email and
+ * consent are collected; the student's own WhatsApp, email and consent are ignored.
+ * Adults (18+) give their own WhatsApp, optional email and consent.
  * This is checked independently of the base schema so a user sees all
  * problems at once instead of fixing them in rounds.
  */
 export function validateStudentInquiry(input) {
-  const raw = input && typeof input === "object" ? input : {};
+  const source = input && typeof input === "object" ? input : {};
+
+  const age = ageSchema.safeParse(source.age);
+  const isMinor = age.success && age.data < MINOR_AGE_LIMIT;
+
+  // Under 18: the student's own phone, email and consent are NOT collected.
+  // Drop them before parsing so stale hidden values cannot cause errors or be saved.
+  const raw = isMinor
+    ? { ...source, whatsapp: undefined, email: undefined, consent: undefined }
+    : source;
 
   const parsed = studentInquirySchema.safeParse(raw);
   const fields = parsed.success ? {} : zodFieldErrors(parsed.error);
 
-  const age = ageSchema.safeParse(raw.age);
-  if (age.success && age.data < MINOR_AGE_LIMIT) {
+  if (isMinor) {
     if (!fields.contactName && !cleanLine(raw.contactName)) {
       fields.contactName = "অভিভাবক/যোগাযোগকারীর নাম লিখুন";
     }
@@ -198,10 +206,25 @@ export function validateStudentInquiry(input) {
       fields.guardianWhatsapp = "অভিভাবকের WhatsApp নম্বর লিখুন";
     }
     if (raw.guardianConsent !== true) {
-      fields.guardianConsent = "তথ্য দেওয়ার অনুমতির বিষয়টি নিশ্চিত করুন";
+      fields.guardianConsent = "অভিভাবকের সম্মতি ও অনুমতি নিশ্চিত করুন";
+    }
+  } else {
+    // 18 and over (or age still invalid): same rules as before.
+    if (!fields.whatsapp && !normalizePhone(raw.whatsapp)) {
+      fields.whatsapp = PHONE_MESSAGE;
+    }
+    if (raw.consent !== true) {
+      fields.consent = "যোগাযোগের জন্য সম্মতি দিতে হবে";
     }
   }
 
   if (Object.keys(fields).length > 0) return { success: false, fields };
-  return { success: true, data: parsed.data };
+
+  const data = parsed.data;
+  if (isMinor) {
+    data.whatsapp = undefined;
+    data.email = undefined;
+    data.consent = false;
+  }
+  return { success: true, data };
 }

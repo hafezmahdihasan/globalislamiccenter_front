@@ -55,7 +55,9 @@ const studentInquirySchema = new Schema(
 
     whatsapp: {
       type: String,
-      required: true,
+      required() {
+        return this.age >= 18;
+      },
       trim: true,
       maxlength: 30,
     },
@@ -100,7 +102,7 @@ const studentInquirySchema = new Schema(
 
     consent: {
       type: Boolean,
-      required: true,
+      default: false,
     },
     guardianConsent: {
       type: Boolean,
