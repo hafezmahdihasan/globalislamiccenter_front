@@ -1,9 +1,0 @@
-Add these exports near the top of BOTH existing route files:
-
-src/app/api/student-inquiries/route.js
-src/app/api/telegram/webhook/route.js
-
-export const runtime = "nodejs";
-export const maxDuration = 300;
-
-Keep each route's existing handlers, validation, Telegram webhook secret checks, and update-id idempotency logic. Do not overwrite the whole route with this snippet.

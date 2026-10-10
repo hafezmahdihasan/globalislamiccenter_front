@@ -48,30 +48,23 @@ async function saveInquiry(data, ipAddress) {
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      return await StudentInquiry.create({
-        ...base,
-        submissionId: generateSubmissionId(),
-      });
+      return await StudentInquiry.create({ ...base, submissionId: generateSubmissionId() });
     } catch (cause) {
       if (cause?.code === 11000) continue; // submissionId collision: try a new one
       throw new AppError("DATABASE_ERROR", { cause });
     }
   }
-  throw new AppError("DATABASE_ERROR", {
-    cause: new Error("Could not allocate a unique submissionId"),
-  });
+  throw new AppError("DATABASE_ERROR", { cause: new Error("Could not allocate a unique submissionId") });
 }
 
 /**
  * Public submission pipeline:
  * validate -> honeypot -> rate limit -> reCAPTCHA -> save -> Telegram notify.
- * Returns the public-safe submission ID plus `runNotification`, which the
- * caller must schedule (never send it to the client).
+ * Returns only the public-safe submission ID.
  */
 export async function submitStudentInquiry(body, { ip, requestId }) {
   const result = validateStudentInquiry(body);
-  if (!result.success)
-    throw new AppError("VALIDATION_ERROR", { fields: result.fields });
+  if (!result.success) throw new AppError("VALIDATION_ERROR", { fields: result.fields });
   const data = result.data;
 
   if (data.website) {
@@ -88,9 +81,7 @@ export async function submitStudentInquiry(body, { ip, requestId }) {
     throw new AppError("DATABASE_ERROR", { cause });
   }
   if (!limit.allowed) {
-    throw new AppError("RATE_LIMITED", {
-      retryAfterSeconds: limit.retryAfterSeconds,
-    });
+    throw new AppError("RATE_LIMITED", { retryAfterSeconds: limit.retryAfterSeconds });
   }
 
   if (!data.recaptchaToken) throw new AppError("RECAPTCHA_FAILED");
@@ -108,43 +99,33 @@ export async function submitStudentInquiry(body, { ip, requestId }) {
     submissionId: inquiry.submissionId,
   });
 
-  // The Telegram PDF is created AFTER the response is sent (the route runs
-  // `runNotification` inside after()), so a slow PDF never delays the visitor.
   // Telegram failure must never lose or reject the saved inquiry.
-  const runNotification = async () => {
-    try {
-      await notifyNewInquiry(inquiry);
-    } catch (error) {
-      logger.error("telegram notification threw", {
-        requestId,
-        action: "telegram_notify",
-        submissionId: inquiry.submissionId,
-        error,
-      });
-    }
-  };
+  try {
+    await notifyNewInquiry(inquiry);
+  } catch (error) {
+    logger.error("telegram notification threw", {
+      requestId,
+      action: "telegram_notify",
+      submissionId: inquiry.submissionId,
+      error,
+    });
+  }
 
-  return { submissionId: inquiry.submissionId, runNotification };
+  return { submissionId: inquiry.submissionId };
 }
 
 export async function listNewInquiries() {
   await ensureDb();
-  return StudentInquiry.find({ isNewInquiry: true })
-    .select("+ipAddress")
-    .sort({ createdAt: -1 })
-    .lean();
+  return StudentInquiry.find({ isNewInquiry: true }).sort({ createdAt: -1 }).lean();
 }
 
 export async function listAllInquiries() {
   await ensureDb();
-  return StudentInquiry.find({})
-    .select("+ipAddress")
-    .sort({ createdAt: -1 })
-    .lean();
+  return StudentInquiry.find({}).sort({ createdAt: -1 }).lean();
 }
 
 /**
- * Call ONLY after the PDF was delivered successfully. Increments each
+ * Call ONLY after the CSV was delivered successfully. Increments each
  * student's export count, then retires anyone who reached the limit.
  */
 export async function recordNewInquiryExport(ids) {

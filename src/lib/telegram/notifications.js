@@ -2,8 +2,6 @@ import { getBot } from "@/lib/telegram/bot";
 import { getTelegramEnv } from "@/lib/config/env";
 import StudentInquiry from "@/models/StudentInquiry";
 import { formatDateTime } from "@/lib/utils/format";
-import { buildStudentProfilePdf, pdfFilename } from "@/lib/students/pdf";
-import { generateWithSlowNotices } from "@/lib/telegram/pdf-delivery";
 import { logger } from "@/lib/utils/logger";
 
 const line = (label, value) => (value ? `${label}: ${value}` : null);
@@ -38,56 +36,22 @@ export function formatInquiryMessage(inquiry) {
 }
 
 /**
- * Notify every configured admin chat with a one-page A4 PDF of the NEW student
- * (not a table). If the PDF cannot be made, the plain-text message is sent
- * instead so the admin never misses an inquiry. Never throws: a Telegram
- * outage must not affect the already-saved inquiry. The outcome is stored.
- *
- * Designed to run AFTER the HTTP response (see `after()` in the route), so a
- * slow PDF never keeps the visitor waiting.
+ * Notify every configured admin chat. Never throws: a Telegram outage must
+ * not affect the already-saved inquiry. The outcome is stored on the record.
  */
 export async function notifyNewInquiry(inquiry) {
   let sent = 0;
 
   try {
     const { TELEGRAM_ADMIN_CHAT_IDS } = getTelegramEnv();
+    const text = formatInquiryMessage(inquiry);
     const bot = getBot();
-    const notifyAll = async (text) => {
-      await Promise.allSettled(TELEGRAM_ADMIN_CHAT_IDS.map((id) => bot.telegram.sendMessage(id, text)));
-    };
-
-    let pdf = null;
-    try {
-      pdf = await generateWithSlowNotices(
-        ({ signal }) => buildStudentProfilePdf(inquiry, { signal }),
-        { notify: notifyAll },
-      );
-    } catch (error) {
-      logger.error("student pdf failed, falling back to text", {
-        action: "telegram_notify",
-        submissionId: inquiry.submissionId,
-        error,
-      });
-    }
-
-    const summary = `🔔 New student: ${inquiry.studentName} (age ${inquiry.age})\n${inquiry.submissionId}`;
-    const fallbackText = formatInquiryMessage(inquiry);
 
     for (const chatId of TELEGRAM_ADMIN_CHAT_IDS) {
       try {
-        if (pdf) {
-          await bot.telegram.sendDocument(
-            chatId,
-            { source: pdf.buffer, filename: pdfFilename(`student-${inquiry.submissionId}`) },
-            { caption: summary },
-          );
-        } else {
-          await bot.telegram.sendMessage(
-            chatId,
-            `⚠️ The PDF could not be created, so here is the plain text instead.\n\n${fallbackText}`,
-            { link_preview_options: { is_disabled: true } },
-          );
-        }
+        await bot.telegram.sendMessage(chatId, text, {
+          link_preview_options: { is_disabled: true },
+        });
         sent += 1;
       } catch (error) {
         logger.error("telegram notification failed", {
