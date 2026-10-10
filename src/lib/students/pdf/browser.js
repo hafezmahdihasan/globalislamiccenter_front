@@ -38,12 +38,21 @@ async function launchOptions() {
   const configured = process.env.PDF_CHROME_PATH || process.env.CHROME_PATH;
   if (configured) return { executablePath: configured, args: BASE_ARGS };
 
-  const serverless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  const serverless = Boolean(
+    process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME,
+  );
   if (!serverless) {
     const local = LOCAL_CHROME_PATHS.find((candidate) => existsSync(candidate));
     if (local) return { executablePath: local, args: BASE_ARGS };
   }
 
+  // @sparticuz/chromium only unpacks its bundled system libraries (libnss3 etc.)
+  // when it believes it runs on AWS Lambda. Vercel runs on the same base image
+  // but does not always set this variable, which causes
+  // "libnss3.so: cannot open shared object file". Set it BEFORE importing.
+  if (!process.env.AWS_EXECUTION_ENV) {
+    process.env.AWS_EXECUTION_ENV = `AWS_Lambda_nodejs${process.versions.node.split(".")[0]}.x`;
+  }
   const { default: chromium } = await import("@sparticuz/chromium");
   return {
     executablePath: await chromium.executablePath(),
@@ -63,7 +72,11 @@ async function renderNow(html, pdfOptions, signal) {
   const options = await launchOptions();
   const timeout = getPdfTimeoutMs();
 
-  const browser = await puppeteer.launch({ ...options, headless: true, timeout: 60_000 });
+  const browser = await puppeteer.launch({
+    ...options,
+    headless: true,
+    timeout: 60_000,
+  });
   const onAbort = () => browser.close().catch(() => {});
   signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -74,13 +87,16 @@ async function renderNow(html, pdfOptions, signal) {
     await page.setRequestInterception(true);
     page.on("request", (request) => {
       // Fonts and images are inlined as data: URIs; nothing may leave the box.
-      if (request.url().startsWith("data:") || request.url() === "about:blank") request.continue();
+      if (request.url().startsWith("data:") || request.url() === "about:blank")
+        request.continue();
       else request.abort();
     });
 
     await page.setContent(html, { waitUntil: "load", timeout });
     // Make sure every embedded font has been decoded before printing.
-    await page.evaluate(() => document.fonts && document.fonts.ready).catch(() => {});
+    await page
+      .evaluate(() => document.fonts && document.fonts.ready)
+      .catch(() => {});
 
     const pdf = await page.pdf({
       printBackground: true,
