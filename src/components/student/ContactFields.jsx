@@ -6,9 +6,8 @@ import { LIMITS } from "@/lib/students/validation";
  * `names` maps the pair onto the form's field names.
  */
 const numberPurify = (value) => {
-  return value.trim().startsWith("+")
-    ? value.trim().substring(1)
-    : value.trim();
+  value = String(value || "").trim();
+  return value.startsWith("+") ? value.substring(1) : value.trim();
 };
 export default function ContactFields({
   idPrefix,

@@ -14,6 +14,11 @@ export const MAX_EXPORT_BYTES = 45 * 1024 * 1024;
 const BOM = "﻿";
 const FORMULA_START = /^[=+\-@\t\r]/;
 
+const numberPurify = (value) => {
+  value = String(value || "").trim();
+  return value.startsWith("+") ? value.substring(1) : value.trim();
+};
+
 export const CSV_COLUMNS = [
   { header: "Submission ID", value: (r) => r.submissionId },
   { header: "Student Name", value: (r) => r.studentName },
@@ -22,10 +27,14 @@ export const CSV_COLUMNS = [
   { header: "Country", value: (r) => r.country },
   { header: "City", value: (r) => r.city },
   { header: "Study Topic", value: (r) => r.studyTopic },
-  { header: "WhatsApp", value: (r) => r.whatsapp, phone: true },
+  { header: "WhatsApp", value: (r) => numberPurify(r.whatsapp), phone: true },
   { header: "Email", value: (r) => r.email },
   { header: "Guardian/Contact", value: (r) => r.contactName },
-  { header: "Guardian WhatsApp", value: (r) => r.guardianWhatsapp, phone: true },
+  {
+    header: "Guardian WhatsApp",
+    value: (r) => numberPurify(r.guardianWhatsapp),
+    phone: true,
+  },
   { header: "Guardian Email", value: (r) => r.guardianEmail },
   { header: "Message", value: (r) => r.message },
   { header: "Is New", value: (r) => r.isNewInquiry },
@@ -51,7 +60,9 @@ function toCell(value, { phone = false } = {}) {
 export function buildStudentsCsv(rows) {
   const lines = [CSV_COLUMNS.map((column) => toCell(column.header)).join(",")];
   for (const row of rows) {
-    lines.push(CSV_COLUMNS.map((column) => toCell(column.value(row), column)).join(","));
+    lines.push(
+      CSV_COLUMNS.map((column) => toCell(column.value(row), column)).join(","),
+    );
   }
   return BOM + lines.join("\r\n") + "\r\n";
 }
