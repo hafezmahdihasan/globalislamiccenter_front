@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { after } from "next/server";
 import { connectDB } from "@/lib/db/mongoose";
 import StudentInquiry from "@/models/StudentInquiry";
 import { validateStudentInquiry } from "@/lib/students/validation";
@@ -9,7 +10,7 @@ import { AppError } from "@/lib/utils/errors";
 import { logger } from "@/lib/utils/logger";
 
 export const RECAPTCHA_ACTION = "student_form";
-/** A student stops being "new" after this many successful /newstudents exports. */
+/** A student stops being "new" after this many successful /newstudents PDF deliveries. */
 export const NEW_EXPORT_LIMIT = 3;
 
 async function ensureDb() {
@@ -26,13 +27,14 @@ function generateSubmissionId() {
 }
 
 async function saveInquiry(data, ipAddress) {
-  // Explicit field list: never spread client input into the document.
+  // Explicit allowlist: do not spread client-controlled properties into the model.
   const base = {
     studentName: data.studentName,
     age: data.age,
     classLevel: data.classLevel,
     country: data.country,
     city: data.city,
+    address: data.address,
     studyTopic: data.studyTopic,
     whatsapp: data.whatsapp,
     email: data.email,
@@ -48,23 +50,32 @@ async function saveInquiry(data, ipAddress) {
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      return await StudentInquiry.create({ ...base, submissionId: generateSubmissionId() });
+      return await StudentInquiry.create({
+        ...base,
+        submissionId: generateSubmissionId(),
+      });
     } catch (cause) {
-      if (cause?.code === 11000) continue; // submissionId collision: try a new one
+      if (cause?.code === 11000) continue;
       throw new AppError("DATABASE_ERROR", { cause });
     }
   }
-  throw new AppError("DATABASE_ERROR", { cause: new Error("Could not allocate a unique submissionId") });
+
+  throw new AppError("DATABASE_ERROR", {
+    cause: new Error("Could not allocate a unique submissionId"),
+  });
 }
 
 /**
- * Public submission pipeline:
- * validate -> honeypot -> rate limit -> reCAPTCHA -> save -> Telegram notify.
- * Returns only the public-safe submission ID.
+ * Public inquiry pipeline:
+ * validate -> honeypot -> rate limit -> reCAPTCHA -> persist -> schedule PDF notification.
+ * PDF work is deferred with Next.js after() so a slow Chromium startup does not
+ * keep the student's form waiting. The serverless invocation still observes maxDuration.
  */
 export async function submitStudentInquiry(body, { ip, requestId }) {
   const result = validateStudentInquiry(body);
-  if (!result.success) throw new AppError("VALIDATION_ERROR", { fields: result.fields });
+  if (!result.success) {
+    throw new AppError("VALIDATION_ERROR", { fields: result.fields });
+  }
   const data = result.data;
 
   if (data.website) {
@@ -99,17 +110,18 @@ export async function submitStudentInquiry(body, { ip, requestId }) {
     submissionId: inquiry.submissionId,
   });
 
-  // Telegram failure must never lose or reject the saved inquiry.
-  try {
-    await notifyNewInquiry(inquiry);
-  } catch (error) {
-    logger.error("telegram notification threw", {
-      requestId,
-      action: "telegram_notify",
-      submissionId: inquiry.submissionId,
-      error,
-    });
-  }
+  after(async () => {
+    try {
+      await notifyNewInquiry(inquiry.toObject ? inquiry.toObject() : inquiry);
+    } catch (error) {
+      logger.error("Telegram student profile PDF notification failed", {
+        requestId,
+        action: "telegram_pdf_notify",
+        submissionId: inquiry.submissionId,
+        error,
+      });
+    }
+  });
 
   return { submissionId: inquiry.submissionId };
 }
@@ -124,13 +136,11 @@ export async function listAllInquiries() {
   return StudentInquiry.find({}).sort({ createdAt: -1 }).lean();
 }
 
-/**
- * Call ONLY after the CSV was delivered successfully. Increments each
- * student's export count, then retires anyone who reached the limit.
- */
+/** Call only after Telegram confirms delivery of a /newstudents PDF. */
 export async function recordNewInquiryExport(ids) {
-  if (!ids.length) return;
+  if (!Array.isArray(ids) || !ids.length) return;
   await ensureDb();
+
   await StudentInquiry.updateMany(
     { _id: { $in: ids }, isNewInquiry: true },
     { $inc: { newExportCount: 1 } },
