@@ -18,12 +18,8 @@ import {
   listAllInquiries,
   recordNewInquiryExport,
 } from "@/lib/students/service";
-import {
-  createStudentListPdf,
-  studentListPdfFilename,
-  MAX_PDF_BYTES,
-} from "@/lib/students/export";
-import { runWithMinuteProgress } from "@/lib/students/pdf/progress";
+import { buildStudentListPdf, pdfFilename, MAX_PDF_BYTES } from "@/lib/students/pdf";
+import { generateWithSlowNotices } from "@/lib/telegram/pdf-delivery";
 import { formatDateTime } from "@/lib/utils/format";
 import { logger } from "@/lib/utils/logger";
 
@@ -32,59 +28,48 @@ const COMMANDS_SIGNED_OUT = [
   "/status — session status",
 ];
 const COMMANDS_SIGNED_IN = [
-  "/newstudents — PDF of new inquiries",
-  "/allstudents — PDF of every inquiry",
+  "/newstudents — PDF table of new inquiries",
+  "/allstudents — PDF table of every inquiry",
   "/status — session status",
   "/logout — end session",
 ];
 
 const deleteQuietly = (ctx) => ctx.deleteMessage().catch(() => {});
 
-function progressMessage(minute) {
-  const duration = minute === 1 ? "1 minute" : `${minute} minutes`;
-  return `😅 দুঃখিত! PDF তৈরি করতে একটু বেশি সময় লাগছে। কাজ চলছে—অনুগ্রহ করে অপেক্ষা করুন। (${duration})`;
-}
-
 /**
- * Runs on every update before any handler. Only allowlisted users in a private
- * chat are allowed to operate this bot or initiate password authentication.
+ * Runs on EVERY update before any handler. Ignores non-private chats and
+ * refuses anyone not on the TELEGRAM_ALLOWED_USER_IDS allowlist.
  */
 async function guard(ctx, next) {
   const userId = ctx.from?.id;
   if (!userId || ctx.chat?.type !== "private") return undefined;
 
   if (!isAllowedUser(userId)) {
-    logger.warn("telegram user not allowed", {
-      action: "telegram_guard",
-      telegramUserId: userId,
-    });
+    logger.warn("telegram user not allowed", { action: "telegram_guard", telegramUserId: userId });
     if (ctx.message) await ctx.reply("⛔ You are not authorized to use this bot.");
     return undefined;
   }
-
   return next();
 }
 
+/** Re-checks the stored session for every protected command. */
 async function requireAuth(ctx) {
   const session = await getSession(ctx.from.id);
-  if (!isAuthenticated(session) || String(session.chatId) !== String(ctx.chat.id)) {
+  if (!isAuthenticated(session) || session.chatId !== ctx.chat.id) {
     await ctx.reply("🔒 Please sign in first with /auth.");
     return null;
   }
-
   await touchSession(ctx.from.id);
   return session;
 }
 
 async function handleStart(ctx) {
   const session = await getSession(ctx.from.id);
-  const commands = isAuthenticated(session) ? COMMANDS_SIGNED_IN : COMMANDS_SIGNED_OUT;
-  await ctx.reply([
-    "👋 GIC Admin Bot",
-    "This bot is for authorized GIC administrators only.",
-    "",
-    ...commands,
-  ].join("\n"));
+  const signedIn = isAuthenticated(session);
+  const commands = signedIn ? COMMANDS_SIGNED_IN : COMMANDS_SIGNED_OUT;
+  await ctx.reply(
+    ["👋 GIC Admin Bot", "This bot is for GIC administrators only.", "", ...commands].join("\n"),
+  );
 }
 
 async function handleAuth(ctx) {
@@ -95,38 +80,34 @@ async function handleAuth(ctx) {
     return;
   }
   if (isLocked(session)) {
-    await ctx.reply(`🔒 Too many failed attempts. Please try again in about ${LOCK_MINUTES} minutes.`);
+    await ctx.reply("🔒 Too many failed attempts. Please try again later.");
     return;
   }
 
   await beginAuth({ userId: ctx.from.id, chatId: ctx.chat.id });
-  await ctx.reply("🔐 Admin sign-in\nSend the admin email address. Do not send credentials in a group chat.");
+  await ctx.reply("🔐 Admin sign-in\nSend the admin email address.");
 }
 
 async function handleLogout(ctx) {
   await endSession(ctx.from.id);
-  await ctx.reply("👋 Signed out. Use /auth when you need to sign in again.");
+  await ctx.reply("👋 Signed out.");
 }
 
 async function handleStatus(ctx) {
   const session = await getSession(ctx.from.id);
-  if (isAuthenticated(session) && String(session.chatId) === String(ctx.chat.id)) {
+  if (isAuthenticated(session)) {
     await ctx.reply(`✅ Signed in. Session expires: ${formatDateTime(session.expiresAt)}`);
-    return;
+  } else {
+    await ctx.reply("🔒 Not signed in. Send /auth to sign in.");
   }
-  if (isLocked(session)) {
-    await ctx.reply(`🔒 Authentication is temporarily locked. Try again in about ${LOCK_MINUTES} minutes.`);
-    return;
-  }
-  await ctx.reply(isAuthInProgress(session)
-    ? "🔐 Authentication is in progress. Continue in this private chat, or send /logout to cancel."
-    : "🔒 Not signed in. Send /auth to sign in.");
 }
 
 async function handleText(ctx) {
   const text = ctx.message?.text ?? "";
+
+  // Unregistered slash commands must never be consumed as an email/password.
   if (text.startsWith("/")) {
-    await ctx.reply("Unknown command. Send /start to see the available commands.");
+    await ctx.reply("Unknown command. Send /start to see what is available.");
     return;
   }
 
@@ -134,135 +115,162 @@ async function handleText(ctx) {
   const session = await getSession(userId);
 
   if (!isAuthInProgress(session)) {
-    await ctx.reply("Send /start to see the available commands.");
+    await ctx.reply("Send /start to see available commands.");
     return;
   }
 
   if (isLocked(session)) {
     await deleteQuietly(ctx);
-    await ctx.reply(`🔒 Too many failed attempts. Try again in about ${LOCK_MINUTES} minutes.`);
+    await ctx.reply("🔒 Too many failed attempts. Please try again later.");
     return;
   }
 
   if (session.authState === "awaiting_email") {
     await recordEmail({ userId, matched: checkAdminEmail(text) });
     await deleteQuietly(ctx);
-    await ctx.reply("🔑 Now send the admin password. I will try to delete your message for privacy.");
+    await ctx.reply("🔑 Now send the admin password. I will try to delete your message.");
     return;
   }
 
-  // Always compare the password, even if email did not match, to reduce timing leaks.
-  const passwordMatched = await checkAdminPassword(text);
-  const emailMatched = Boolean(session.emailMatched);
+  // awaiting_password. Always run the hash comparison so timing does not
+  // reveal whether the email step matched.
   await deleteQuietly(ctx);
+  const passwordOk = await checkAdminPassword(text);
 
-  if (!emailMatched || !passwordMatched) {
-    // Keep the existing session API contract: registerFailure takes an object.
-    await registerFailure({ userId });
-    const refreshed = await getSession(userId);
-    if (isLocked(refreshed)) {
-      await ctx.reply(`⛔ Sign-in failed too many times. Try again in about ${LOCK_MINUTES} minutes.`);
-    } else {
-      await ctx.reply("⛔ The credentials were not accepted. Send /auth to start again.");
-    }
+  if (session.emailMatched && passwordOk) {
+    const { TELEGRAM_SESSION_HOURS } = getTelegramEnv();
+    await completeAuth({ userId, chatId: ctx.chat.id, hours: TELEGRAM_SESSION_HOURS });
+    logger.info("telegram admin signed in", { action: "telegram_auth", telegramUserId: userId });
+    await ctx.reply(`✅ Signed in. Session valid for ${TELEGRAM_SESSION_HOURS} hours.\n\n${COMMANDS_SIGNED_IN.join("\n")}`);
     return;
   }
 
-  // Keep the existing session API contract and honor its configured lifetime.
-  const { TELEGRAM_SESSION_HOURS } = getTelegramEnv();
-  await completeAuth({
-    userId,
-    chatId: ctx.chat.id,
-    hours: TELEGRAM_SESSION_HOURS,
+  const failure = await registerFailure({ userId });
+  logger.warn("telegram admin sign-in failed", {
+    action: "telegram_auth",
+    telegramUserId: userId,
+    locked: failure.locked,
   });
-  const authenticated = await getSession(userId);
-  await ctx.reply(`✅ Authentication successful. Session expires: ${formatDateTime(authenticated?.expiresAt)}\n\nUse /newstudents or /allstudents to export PDF reports.`);
+  if (failure.locked) {
+    await ctx.reply(`🔒 Too many failed attempts. Sign-in is locked for ${LOCK_MINUTES} minutes.`);
+  } else {
+    await ctx.reply("❌ Authentication failed. Send /auth to try again.");
+  }
 }
 
-async function sendStudentListPdf(ctx, kind) {
-  if (!(await requireAuth(ctx))) return;
+/**
+ * Builds the table PDF (20 students per 26x30in page) and sends it. While it
+ * is still being made, "sorry, 1 more minute" messages go out every minute.
+ * Returns true only if Telegram accepted the file.
+ */
+async function sendPdf(ctx, { kind, title, subtitle, rows, caption }) {
+  await ctx.reply("⏳ Preparing your PDF… I will send it as soon as it is ready.").catch(() => {});
+  ctx.sendChatAction("upload_document").catch(() => {});
 
-  const label = kind === "new" ? "new student inquiries" : "all student inquiries";
+  const { buffer, pageCount } = await generateWithSlowNotices(
+    ({ signal }) => buildStudentListPdf(rows, { title, subtitle, signal }),
+    { notify: (text) => ctx.reply(text) },
+  );
+
+  if (buffer.length > MAX_PDF_BYTES) {
+    await ctx.reply(
+      `⚠️ This PDF is too large to send through Telegram (${(buffer.length / 1048576).toFixed(1)} MB). Nothing was changed.`,
+    );
+    return false;
+  }
+
+  await ctx.replyWithDocument(
+    { source: buffer, filename: pdfFilename(kind) },
+    { caption: `${caption}\n${pageCount} page${pageCount === 1 ? "" : "s"} · 20 students per page` },
+  );
+  return true;
+}
+
+async function handleNewStudents(ctx) {
+  const session = await requireAuth(ctx);
+  if (!session) return;
+
+  let rows;
   try {
-    const records = kind === "new" ? await listNewInquiries() : await listAllInquiries();
+    rows = await listNewInquiries();
+  } catch (error) {
+    logger.error("could not load new students", { action: "export_new", error });
+    await ctx.reply("⚠️ Could not load students right now. Please try again.");
+    return;
+  }
 
-    if (!records.length) {
-      await ctx.reply(kind === "new"
-        ? "✅ No new student inquiries were found."
-        : "ℹ️ There are no student inquiries to export yet.");
-      return;
-    }
+  if (rows.length === 0) {
+    await ctx.reply("✅ No new student submissions found.");
+    return;
+  }
 
-    await runWithMinuteProgress({
-      sendProgress: async (minute) => {
-        await ctx.telegram.sendMessage(ctx.chat.id, progressMessage(minute));
-      },
-      work: async ({ signal }) => {
-        const pdf = await createStudentListPdf(records, { kind, signal });
-        if (pdf.length > MAX_PDF_BYTES) throw new Error("The PDF is too large to send through Telegram.");
-
-        const filename = studentListPdfFilename(kind);
-        await ctx.replyWithDocument(
-          { source: pdf, filename },
-          {
-            caption: `GIC ${kind === "new" ? "new student" : "all student"} report · ${records.length} records · 20 records per page`,
-          },
-        );
-
-        // A new inquiry is counted only after Telegram confirms document delivery.
-        if (kind === "new") {
-          try {
-            await recordNewInquiryExport(records.map((record) => record._id));
-          } catch (error) {
-            logger.error("PDF was sent but new-export tracking failed", {
-              action: "telegram_pdf_export_tracking",
-              count: records.length,
-              error,
-            });
-            await ctx.reply("⚠ The PDF was delivered, but I could not update the export counter. Please notify the system administrator.");
-          }
-        }
-        return { count: records.length, filename };
-      },
+  let delivered = false;
+  try {
+    delivered = await sendPdf(ctx, {
+      kind: "new-students",
+      title: "New Student Inquiries",
+      subtitle: "Newest first",
+      rows,
+      caption: `📄 New student inquiries: ${rows.length} (newest first)`,
     });
   } catch (error) {
-    logger.error("student PDF export failed", {
-      action: "telegram_pdf_export",
-      kind,
-      telegramUserId: ctx.from?.id,
-      error,
+    logger.error("new students export failed", { action: "export_new", count: rows.length, error });
+    await ctx.reply("⚠️ Export failed. Nothing was marked as exported.");
+    return;
+  }
+  if (!delivered) return;
+
+  // Counters move only AFTER Telegram accepted the PDF.
+  try {
+    await recordNewInquiryExport(rows.map((row) => row._id));
+  } catch (error) {
+    logger.error("could not update export counters", { action: "export_new", error });
+    await ctx.reply("⚠️ The PDF was sent, but export counters could not be updated, so these students may appear as new again.");
+    return;
+  }
+  logger.info("new students exported", { action: "export_new", count: rows.length, telegramUserId: ctx.from.id });
+}
+
+async function handleAllStudents(ctx) {
+  const session = await requireAuth(ctx);
+  if (!session) return;
+
+  let rows;
+  try {
+    rows = await listAllInquiries();
+  } catch (error) {
+    logger.error("could not load all students", { action: "export_all", error });
+    await ctx.reply("⚠️ Could not load students right now. Please try again.");
+    return;
+  }
+
+  if (rows.length === 0) {
+    await ctx.reply("No student submissions yet.");
+    return;
+  }
+
+  try {
+    await sendPdf(ctx, {
+      kind: "all-students",
+      title: "All Student Inquiries",
+      subtitle: "Newest first",
+      rows,
+      caption: `📄 All student inquiries: ${rows.length} (newest first)`,
     });
-
-    if (error?.code === "PDF_JOB_TIMEOUT") {
-      await ctx.reply("😅 Sorry, the PDF job took too long and was stopped safely. Please try again; no export counter was advanced unless the PDF was delivered.");
-      return;
-    }
-
-    await ctx.reply(`⚠ I couldn't create or send the PDF for ${label}. Please try again. If this repeats, contact the system administrator.`);
+    logger.info("all students exported", { action: "export_all", count: rows.length, telegramUserId: ctx.from.id });
+  } catch (error) {
+    logger.error("all students export failed", { action: "export_all", count: rows.length, error });
+    await ctx.reply("⚠️ Export failed. Please try again.");
   }
 }
 
 export function registerHandlers(bot) {
   bot.use(guard);
-
   bot.start(handleStart);
   bot.command("auth", handleAuth);
   bot.command("logout", handleLogout);
   bot.command("status", handleStatus);
-  bot.command("newstudents", (ctx) => sendStudentListPdf(ctx, "new"));
-  bot.command("allstudents", (ctx) => sendStudentListPdf(ctx, "all"));
-  bot.command("cancel", handleLogout);
+  bot.command("newstudents", handleNewStudents);
+  bot.command("allstudents", handleAllStudents);
   bot.on("text", handleText);
-
-  // Keep bot commands private even if the configured allowlist is accidentally empty.
-  const allowedUserIds = getTelegramEnv().TELEGRAM_ALLOWED_USER_IDS;
-  const hasAllowedUsers = Array.isArray(allowedUserIds)
-    ? allowedUserIds.length > 0
-    : Boolean(String(allowedUserIds || "").trim());
-
-  if (!hasAllowedUsers) {
-    logger.warn("TELEGRAM_ALLOWED_USER_IDS is empty; all Telegram bot users will be denied", {
-      action: "telegram_configuration",
-    });
-  }
 }

@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { after } from "next/server";
 import { connectDB } from "@/lib/db/mongoose";
 import StudentInquiry from "@/models/StudentInquiry";
 import { validateStudentInquiry } from "@/lib/students/validation";
@@ -10,7 +9,7 @@ import { AppError } from "@/lib/utils/errors";
 import { logger } from "@/lib/utils/logger";
 
 export const RECAPTCHA_ACTION = "student_form";
-/** A student stops being "new" after this many successful /newstudents PDF deliveries. */
+/** A student stops being "new" after this many successful /newstudents exports. */
 export const NEW_EXPORT_LIMIT = 3;
 
 async function ensureDb() {
@@ -27,14 +26,13 @@ function generateSubmissionId() {
 }
 
 async function saveInquiry(data, ipAddress) {
-  // Explicit allowlist: do not spread client-controlled properties into the model.
+  // Explicit field list: never spread client input into the document.
   const base = {
     studentName: data.studentName,
     age: data.age,
     classLevel: data.classLevel,
     country: data.country,
     city: data.city,
-    address: data.address,
     studyTopic: data.studyTopic,
     whatsapp: data.whatsapp,
     email: data.email,
@@ -55,27 +53,25 @@ async function saveInquiry(data, ipAddress) {
         submissionId: generateSubmissionId(),
       });
     } catch (cause) {
-      if (cause?.code === 11000) continue;
+      if (cause?.code === 11000) continue; // submissionId collision: try a new one
       throw new AppError("DATABASE_ERROR", { cause });
     }
   }
-
   throw new AppError("DATABASE_ERROR", {
     cause: new Error("Could not allocate a unique submissionId"),
   });
 }
 
 /**
- * Public inquiry pipeline:
- * validate -> honeypot -> rate limit -> reCAPTCHA -> persist -> schedule PDF notification.
- * PDF work is deferred with Next.js after() so a slow Chromium startup does not
- * keep the student's form waiting. The serverless invocation still observes maxDuration.
+ * Public submission pipeline:
+ * validate -> honeypot -> rate limit -> reCAPTCHA -> save -> Telegram notify.
+ * Returns the public-safe submission ID plus `runNotification`, which the
+ * caller must schedule (never send it to the client).
  */
 export async function submitStudentInquiry(body, { ip, requestId }) {
   const result = validateStudentInquiry(body);
-  if (!result.success) {
+  if (!result.success)
     throw new AppError("VALIDATION_ERROR", { fields: result.fields });
-  }
   const data = result.data;
 
   if (data.website) {
@@ -92,7 +88,9 @@ export async function submitStudentInquiry(body, { ip, requestId }) {
     throw new AppError("DATABASE_ERROR", { cause });
   }
   if (!limit.allowed) {
-    throw new AppError("RATE_LIMITED", { retryAfterSeconds: limit.retryAfterSeconds });
+    throw new AppError("RATE_LIMITED", {
+      retryAfterSeconds: limit.retryAfterSeconds,
+    });
   }
 
   if (!data.recaptchaToken) throw new AppError("RECAPTCHA_FAILED");
@@ -110,37 +108,48 @@ export async function submitStudentInquiry(body, { ip, requestId }) {
     submissionId: inquiry.submissionId,
   });
 
-  after(async () => {
+  // The Telegram PDF is created AFTER the response is sent (the route runs
+  // `runNotification` inside after()), so a slow PDF never delays the visitor.
+  // Telegram failure must never lose or reject the saved inquiry.
+  const runNotification = async () => {
     try {
-      await notifyNewInquiry(inquiry.toObject ? inquiry.toObject() : inquiry);
+      await notifyNewInquiry(inquiry);
     } catch (error) {
-      logger.error("Telegram student profile PDF notification failed", {
+      logger.error("telegram notification threw", {
         requestId,
-        action: "telegram_pdf_notify",
+        action: "telegram_notify",
         submissionId: inquiry.submissionId,
         error,
       });
     }
-  });
+  };
 
-  return { submissionId: inquiry.submissionId };
+  return { submissionId: inquiry.submissionId, runNotification };
 }
 
 export async function listNewInquiries() {
   await ensureDb();
-  return StudentInquiry.find({ isNewInquiry: true }).sort({ createdAt: -1 }).lean();
+  return StudentInquiry.find({ isNewInquiry: true })
+    .select("+ipAddress")
+    .sort({ createdAt: -1 })
+    .lean();
 }
 
 export async function listAllInquiries() {
   await ensureDb();
-  return StudentInquiry.find({}).sort({ createdAt: -1 }).lean();
+  return StudentInquiry.find({})
+    .select("+ipAddress")
+    .sort({ createdAt: -1 })
+    .lean();
 }
 
-/** Call only after Telegram confirms delivery of a /newstudents PDF. */
+/**
+ * Call ONLY after the PDF was delivered successfully. Increments each
+ * student's export count, then retires anyone who reached the limit.
+ */
 export async function recordNewInquiryExport(ids) {
-  if (!Array.isArray(ids) || !ids.length) return;
+  if (!ids.length) return;
   await ensureDb();
-
   await StudentInquiry.updateMany(
     { _id: { $in: ids }, isNewInquiry: true },
     { $inc: { newExportCount: 1 } },

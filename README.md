@@ -1,6 +1,6 @@
 # GIC — Global Islamic Center (MVP)
 
-Premium one-page website for an online Quran / Islamic education center, with a student inquiry form, MongoDB storage, and a Telegram admin bot that sends notifications and exports students as CSV.
+Premium one-page website for an online Quran / Islamic education center, with a student inquiry form, MongoDB storage, and a Telegram admin bot that sends notifications and sends student PDFs.
 
 **100% JavaScript + JSX. No TypeScript.**
 
@@ -83,8 +83,8 @@ Webhook endpoint: `POST /api/telegram/webhook` (rejects any request without the 
 | `/auth` | allowlisted users | Email, then password; 8-hour session |
 | `/status` | allowlisted users | Shows whether the session is valid |
 | `/logout` | allowlisted users | Ends the session |
-| `/newstudents` | signed in | CSV of new inquiries; each student's export count +1 after a successful send, retired after 3 |
-| `/allstudents` | signed in | CSV of every inquiry; never changes "new" state |
+| `/newstudents` | signed in | PDF table of new inquiries (20 per 26×30in page); each student's export count +1 after a successful send, retired after 3 |
+| `/allstudents` | signed in | PDF table of every inquiry (20 per page); never changes "new" state |
 
 Security behaviors: user-ID allowlist checked on every update, password compared against a bcrypt hash, password message deleted from the chat, 5 failed attempts lock sign-in for 15 minutes, sessions stored in MongoDB, duplicate webhook deliveries ignored by `update_id`.
 
@@ -113,13 +113,13 @@ scripts/            set-telegram-webhook.js
 
 ## Decisions and assumptions to review
 
-- **`isNewInquiry` instead of `isNew`.** `isNew` is a reserved Mongoose property and can interfere with saves, so the "new" flag is stored as `isNewInquiry`. Behavior matches the plan; the CSV column is still "Is New".
+- **`isNewInquiry` instead of `isNew`.** `isNew` is a reserved Mongoose property and can interfere with saves, so the "new" flag is stored as `isNewInquiry`. Behavior matches the plan; the flag is not shown in PDFs.
 - **No separate `address` field.** The form's "city / location" is stored in `city` (max 200 chars).
 - **Vision and Mission copy is a draft** written from the About brief (no text was supplied). Replace it with the client's approved wording in `Vision.jsx` and `Mission.jsx`. The Commitment quote is verbatim from the brief.
 - **Plain controlled React state + the shared Zod schema** for the form (no React Hook Form); reCAPTCHA is loaded directly from Google on first form interaction (no wrapper package). The reCAPTCHA badge is hidden by CSS and the required disclosure text is shown in the form.
 - **Bangla-first page** with English supporting lines; no `hreflang` alternates.
 - **Admin timestamps** are shown in Asia/Dhaka time.
-- **IP address** is stored server-side for abuse control, excluded from queries by default and from the CSV, and disclosed on the form.
+- **IP address** is stored server-side for abuse control, excluded from queries by default (the export queries opt in explicitly) and shown only in the admin PDFs, and disclosed on the form.
 - **Rate-limit IP source:** `X-Real-IP`, then the last `X-Forwarded-For` entry. If you self-host, make your reverse proxy set `X-Real-IP`.
 
 ## Verification status
@@ -128,7 +128,7 @@ Done offline (npm was blocked):
 
 - No `.ts` / `.tsx` files or TypeScript syntax.
 - Every non-JSX `.js` file and `next.config.mjs` passes `node --check`.
-- CSV export and logger redaction executed and checked (BOM, quoting, formula-injection guard, phone exemption, bot-token scrubbing).
+- PDF generation executed locally with Chromium (page counts, 26×30in size, A4 one page, no message in list PDFs, slow-notice timers); logger redaction checked.
 - Shared validation executed against 21 cases with Zod 3.25 (minor/adult guardian rules, normalization, limits, unknown keys dropped).
 
 **Not yet verified (needs `npm install` first):**
@@ -136,7 +136,7 @@ Done offline (npm was blocked):
 - `npm run build` and `npm run lint`
 - JSX files (components, `layout.js`, `page.js`, OG image/icon), Tailwind v4 `@apply` rules, `next/font` Bengali font loading
 - Mongoose models and indexes against a real database
-- Telegraf webhook handling, command flows and CSV delivery against the real Telegram API
+- Telegraf webhook handling, command flows and PDF delivery against the real Telegram API
 - reCAPTCHA end to end
 
 Suggested first run: `npm install && npm run lint && npm run build`, then walk the manual test list below.
@@ -150,3 +150,10 @@ Telegram: non-allowlisted user, unknown command, wrong email, wrong password, 5 
 ## Non-goals (not built)
 
 Admin web dashboard, teacher/student accounts, courses/LMS, payments, attendance, certificates, live classes, chat, email marketing, Redis, microservices.
+
+## PDF export
+
+- `/newstudents`, `/allstudents`: table PDF, **26 × 30 in** pages, **20 students per page**; adults show their own contact, under-18s show guardian phone/email/consent only; the message is never included.
+- New submission: a one-page **A4** PDF of that student (includes the message) is sent to every admin chat. If PDF creation fails, the plain-text message is sent instead.
+- If a PDF takes longer than 1, 2, 3… minutes, a "sorry, about 1 more minute 😊" message is sent each minute until it is ready. Hard limit: `PDF_TIMEOUT_MS` (default 270 s, route `maxDuration` is 300 s).
+- Locally set `PDF_CHROME_PATH` (or install Chrome). On Vercel `@sparticuz/chromium` is used.
