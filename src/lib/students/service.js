@@ -1,7 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { connectDB } from "@/lib/db/mongoose";
 import StudentInquiry from "@/models/StudentInquiry";
-import { validateStudentInquiry } from "@/lib/students/validation";
+import {
+  validateStudentInquiry,
+  MINOR_AGE_LIMIT,
+} from "@/lib/students/validation";
 import { checkRateLimit } from "@/lib/security/rate-limit";
 import { verifyRecaptcha } from "@/lib/security/recaptcha";
 import { notifyNewInquiry } from "@/lib/telegram/notifications";
@@ -27,6 +30,7 @@ function generateSubmissionId() {
 
 async function saveInquiry(data, ipAddress) {
   // Explicit field list: never spread client input into the document.
+  const minor = data.age < MINOR_AGE_LIMIT;
   const base = {
     studentName: data.studentName,
     age: data.age,
@@ -34,13 +38,14 @@ async function saveInquiry(data, ipAddress) {
     country: data.country,
     city: data.city,
     studyTopic: data.studyTopic,
-    whatsapp: data.whatsapp,
-    email: data.email,
+    // Under 18: the student's own contact is never stored; the guardian's is.
+    whatsapp: minor ? undefined : data.whatsapp,
+    email: minor ? undefined : data.email,
     contactName: data.contactName,
     guardianWhatsapp: data.guardianWhatsapp,
     guardianEmail: data.guardianEmail,
     message: data.message,
-    consent: data.consent,
+    consent: minor ? false : data.consent,
     guardianConsent: data.guardianConsent,
     ipAddress,
     source: "website",
@@ -48,13 +53,18 @@ async function saveInquiry(data, ipAddress) {
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      return await StudentInquiry.create({ ...base, submissionId: generateSubmissionId() });
+      return await StudentInquiry.create({
+        ...base,
+        submissionId: generateSubmissionId(),
+      });
     } catch (cause) {
       if (cause?.code === 11000) continue; // submissionId collision: try a new one
       throw new AppError("DATABASE_ERROR", { cause });
     }
   }
-  throw new AppError("DATABASE_ERROR", { cause: new Error("Could not allocate a unique submissionId") });
+  throw new AppError("DATABASE_ERROR", {
+    cause: new Error("Could not allocate a unique submissionId"),
+  });
 }
 
 /**
@@ -65,7 +75,8 @@ async function saveInquiry(data, ipAddress) {
  */
 export async function submitStudentInquiry(body, { ip, requestId }) {
   const result = validateStudentInquiry(body);
-  if (!result.success) throw new AppError("VALIDATION_ERROR", { fields: result.fields });
+  if (!result.success)
+    throw new AppError("VALIDATION_ERROR", { fields: result.fields });
   const data = result.data;
 
   if (data.website) {
@@ -82,7 +93,9 @@ export async function submitStudentInquiry(body, { ip, requestId }) {
     throw new AppError("DATABASE_ERROR", { cause });
   }
   if (!limit.allowed) {
-    throw new AppError("RATE_LIMITED", { retryAfterSeconds: limit.retryAfterSeconds });
+    throw new AppError("RATE_LIMITED", {
+      retryAfterSeconds: limit.retryAfterSeconds,
+    });
   }
 
   if (!data.recaptchaToken) throw new AppError("RECAPTCHA_FAILED");
@@ -121,12 +134,18 @@ export async function submitStudentInquiry(body, { ip, requestId }) {
 
 export async function listNewInquiries() {
   await ensureDb();
-  return StudentInquiry.find({ isNewInquiry: true }).select("+ipAddress").sort({ createdAt: -1 }).lean();
+  return StudentInquiry.find({ isNewInquiry: true })
+    .select("+ipAddress")
+    .sort({ createdAt: -1 })
+    .lean();
 }
 
 export async function listAllInquiries() {
   await ensureDb();
-  return StudentInquiry.find({}).select("+ipAddress").sort({ createdAt: -1 }).lean();
+  return StudentInquiry.find({})
+    .select("+ipAddress")
+    .sort({ createdAt: -1 })
+    .lean();
 }
 
 /**

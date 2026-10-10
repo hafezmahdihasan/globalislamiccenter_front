@@ -21,7 +21,7 @@ const COLUMNS = [
   { key: "no", label: "#", width: 64, align: "center" },
   { key: "name", label: "Student name", width: 320 },
   { key: "age", label: "Age", width: 76, align: "center" },
-  { key: "phone", label: "WhatsApp", width: 250 },
+  { key: "phone", label: "WhatsApp", width: 500 },
   { key: "email", label: "Email", width: 400 },
   { key: "consent", label: "Consent", width: 140, align: "center" },
   { key: "classLevel", label: "Class / level", width: 190 },
@@ -32,7 +32,9 @@ const COLUMNS = [
 
 const widthSum = COLUMNS.reduce((sum, column) => sum + column.width, 0);
 if (widthSum !== TABLE_WIDTH) {
-  throw new Error(`Report list columns must add up to ${TABLE_WIDTH}px, got ${widthSum}px`);
+  throw new Error(
+    `Report list columns must add up to ${TABLE_WIDTH}px, got ${widthSum}px`,
+  );
 }
 
 const dash = '<span class="na">&ndash;</span>';
@@ -64,7 +66,9 @@ function cell(column, record, number) {
     case "classLevel":
       return text(record.classLevel, 2);
     case "ip":
-      return record.ip ? `<div class="mono clamp c2">${esc(record.ip)}</div>` : dash;
+      return record.ip
+        ? `<div class="mono clamp c2">${esc(record.ip)}</div>`
+        : dash;
     case "address":
       return text(record.address, 2);
     case "topic":
@@ -76,10 +80,20 @@ function cell(column, record, number) {
 
 const colgroup = `<colgroup>${COLUMNS.map((c) => `<col style="width:${c.width}px">`).join("")}</colgroup>`;
 const headRow = `<tr>${COLUMNS.map(
-  (c) => `<th class="${c.align === "center" ? "ctr" : ""}">${esc(c.label)}</th>`,
+  (c) =>
+    `<th class="${c.align === "center" ? "ctr" : ""}">${esc(c.label)}</th>`,
 ).join("")}</tr>`;
 
-function pageHtml({ title, subtitle, records, pageIndex, pageCount, total, startNumber, generatedAt }) {
+function pageHtml({
+  title,
+  subtitle,
+  records,
+  pageIndex,
+  pageCount,
+  total,
+  startNumber,
+  generatedAt,
+}) {
   const rows = records
     .map((record, i) => {
       const cells = COLUMNS.map(
@@ -170,7 +184,10 @@ body{font-family:${FONT_STACK};color:${C.charcoal};-webkit-print-color-adjust:ex
  * @param {{ title: string, subtitle?: string, generatedAt?: Date }} meta
  * @returns {{ html: string, pageCount: number }}
  */
-export function buildListHtml(records, { title, subtitle = "", generatedAt = new Date() }) {
+export function buildListHtml(
+  records,
+  { title, subtitle = "", generatedAt = new Date() },
+) {
   const pageCount = Math.max(1, Math.ceil(records.length / ROWS_PER_PAGE));
   const stamp = formatDateTime(generatedAt);
 
@@ -180,7 +197,10 @@ export function buildListHtml(records, { title, subtitle = "", generatedAt = new
       pageHtml({
         title,
         subtitle,
-        records: records.slice(index * ROWS_PER_PAGE, (index + 1) * ROWS_PER_PAGE),
+        records: records.slice(
+          index * ROWS_PER_PAGE,
+          (index + 1) * ROWS_PER_PAGE,
+        ),
         pageIndex: index,
         pageCount,
         total: records.length,
@@ -192,6 +212,10 @@ export function buildListHtml(records, { title, subtitle = "", generatedAt = new
 
   return {
     pageCount,
-    html: htmlDocument({ title: `${title} — GIC`, css: CSS, body: pages.join("") }),
+    html: htmlDocument({
+      title: `${title} — GIC`,
+      css: CSS,
+      body: pages.join(""),
+    }),
   };
 }
